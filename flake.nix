@@ -26,12 +26,21 @@
       default = self.packages.${system}.zerobrew;
     });
 
+    checks = forAllSystems (system: pkgs: {
+      zerobrew-help = pkgs.runCommandLocal "zerobrew-help" {
+        nativeBuildInputs = [ self.packages.${system}.zerobrew ];
+      } ''
+        zb --help > "$out"
+      '';
+    });
+
     darwinModules = rec {
       nix-zerobrew = { lib, pkgs, ... }: {
         imports = [
           ./modules
         ];
         nix-zerobrew.package = lib.mkOptionDefault self.packages.${pkgs.stdenv.hostPlatform.system}.zerobrew;
+        nix-zerobrew.packageRosetta = lib.mkOptionDefault self.packages.x86_64-darwin.zerobrew;
       };
 
       default = nix-zerobrew;

@@ -7,9 +7,15 @@
 #
 # Uses:
 #
-# - ZEROBREW_PREFIX
+# - ZEROBREW_ROOT
+# - ZEROBREW_STORE_DIR
+# - ZEROBREW_DB_DIR
+# - ZEROBREW_CACHE_DIR
+# - ZEROBREW_LOCKS_DIR
+# - ZEROBREW_LINK_DIR
 # - NIX_ZEROBREW_UID
 # - NIX_ZEROBREW_GID
+# - NIX_ZEROBREW_MARKER
 
 # macOS-specific commands
 STAT_PRINTF=("/usr/bin/stat" "-f")
@@ -91,50 +97,39 @@ file_not_grpowned() {
   [[ " ${NIX_ZEROBREW_GID} " != *" $(get_group "$1") "* ]]
 }
 
-# Initialize the Zerobrew prefix directory structure
-#
-# Zerobrew uses a simpler structure than Homebrew:
-# /opt/zerobrew/
-#   store/       - Content-addressable package store (SHA256)
-#   db/          - SQLite database for package metadata
-#   cache/       - Download cache
-#   locks/       - Lock files for concurrent operations
-#   prefix/      - User-facing installation
-#     bin/       - Executables (including zb itself)
-#     Cellar/    - Installed packages (symlinked from store)
-#     opt/       - Version-independent links
-#     lib/       - Shared libraries
-initialize_zerobrew_prefix() {
-  # Zerobrew directory structure
+# Initialize or repair the Zerobrew directory structure for one prefix.
+initialize_zerobrew_layout() {
   directories=(
-    store
-    db
-    cache
-    locks
-    prefix/bin
-    prefix/Cellar
-    prefix/opt
-    prefix/lib
-    prefix/include
-    prefix/share
-    prefix/etc
+    "${ZEROBREW_ROOT}"
+    "${ZEROBREW_STORE_DIR}"
+    "${ZEROBREW_DB_DIR}"
+    "${ZEROBREW_CACHE_DIR}"
+    "${ZEROBREW_LOCKS_DIR}"
+    "${ZEROBREW_LINK_DIR}"
+    "${ZEROBREW_LINK_DIR}/bin"
+    "${ZEROBREW_LINK_DIR}/Cellar"
+    "${ZEROBREW_LINK_DIR}/opt"
+    "${ZEROBREW_LINK_DIR}/lib"
+    "${ZEROBREW_LINK_DIR}/include"
+    "${ZEROBREW_LINK_DIR}/share"
+    "${ZEROBREW_LINK_DIR}/etc"
   )
 
   group_chmods=()
   for dir in "${directories[@]}"
   do
-    if exists_but_not_writable "${ZEROBREW_PREFIX}/${dir}"
+    if exists_but_not_writable "${dir}"
     then
-      group_chmods+=("${ZEROBREW_PREFIX}/${dir}")
+      group_chmods+=("${dir}")
     fi
   done
 
   mkdirs=()
   for dir in "${directories[@]}"
   do
-    if ! [[ -d "${ZEROBREW_PREFIX}/${dir}" ]]
+    if ! [[ -d "${dir}" ]]
     then
-      mkdirs+=("${ZEROBREW_PREFIX}/${dir}")
+      mkdirs+=("${dir}")
     fi
   done
 
@@ -161,7 +156,7 @@ initialize_zerobrew_prefix() {
     done
   fi
 
-  if [[ -d "${ZEROBREW_PREFIX}" ]]
+  if [[ -d "${ZEROBREW_ROOT}" ]]
   then
     if [[ "${#chmods[@]}" -gt 0 ]]
     then
@@ -180,7 +175,7 @@ initialize_zerobrew_prefix() {
       "${CHGRP[@]}" "${NIX_ZEROBREW_GID}" "${chgrps[@]}"
     fi
   else
-    "${INSTALL[@]}" "${ZEROBREW_PREFIX}"
+    "${INSTALL[@]}" "${ZEROBREW_ROOT}"
   fi
 
   if [[ "${#mkdirs[@]}" -gt 0 ]]
@@ -192,8 +187,8 @@ initialize_zerobrew_prefix() {
   fi
 
   # Mark as managed by nix-darwin
-  "${TOUCH[@]}" "${ZEROBREW_PREFIX}/.managed_by_nix_darwin"
-  "${CHOWN[@]}" "${NIX_ZEROBREW_UID}:${NIX_ZEROBREW_GID}" "${ZEROBREW_PREFIX}/.managed_by_nix_darwin"
+  "${TOUCH[@]}" "${NIX_ZEROBREW_MARKER}"
+  "${CHOWN[@]}" "${NIX_ZEROBREW_UID}:${NIX_ZEROBREW_GID}" "${NIX_ZEROBREW_MARKER}"
 }
 
 # vim: set et ts=2 sw=2:

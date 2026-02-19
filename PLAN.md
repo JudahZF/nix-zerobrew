@@ -1,89 +1,78 @@
-# nix-zerobrew - Testing and Verification Plan
+# nix-zerobrew Parity Plan with nix-homebrew
 
-## Project Status
+## Summary
 
-All files have been created. The project needs to be initialized as a git repo and tested.
+This plan tracks feature-parity work focused on behavior and operations rather than Homebrew-specific semantics.
 
-## Files Created
+Parity target:
 
-```
-nix-zerobrew/
-├── flake.nix                    # Main flake with zerobrew-src input
-├── modules/
-│   ├── default.nix              # Core nix-darwin module (~210 lines)
-│   ├── utils.sh                 # Shell utilities for directory setup
-│   └── zb.tail.sh               # Launcher script tail
-├── pkgs/
-│   ├── default.nix              # Package exports
-│   └── zerobrew/
-│       └── default.nix          # Rust build derivation
-└── README.md                    # Documentation
-```
+- Comparable install/activation lifecycle safety
+- Comparable migration and ownership behavior
+- Comparable shell and launcher ergonomics
+- Optional Rosetta workflow on Apple Silicon
 
-## Tasks to Complete
+Non-goals:
 
-### 1. Initialize Git Repository
-```bash
-git init
-git add .
-```
+- Homebrew tap semantics (`taps`, mutable/declarative tap models)
+- Declarative management of all installed package formulas
 
-### 2. Test Flake Evaluation
-```bash
-nix flake check
-```
+## Current Status
 
-### 3. Build the Zerobrew Package
-```bash
-nix build .#zerobrew
-./result/bin/zb --help
-```
+- [x] Prefix lifecycle management is activation-driven and migration-safe.
+- [x] Multi-prefix configuration model is implemented (`nix-zerobrew.prefixes`).
+- [x] Unified architecture-aware launcher is implemented (`zb` in system profile).
+- [x] Optional Rosetta prefix support is implemented (`enableRosetta`).
+- [x] Shell integration toggles are implemented (bash/zsh/fish).
+- [x] Flake smoke checks validate CLI execution (`checks.<system>.zerobrew-help`).
+- [x] Docs updated for parity-oriented workflows.
 
-### 4. Fix Any Build Issues
+## Public Interface Additions
 
-The Rust build may need adjustments:
-- `cargoHash` might be needed instead of `cargoLock.lockFile`
-- Additional darwin frameworks might be required
-- The binary name output might need verification
+### New options
 
-### 5. Test Module Evaluation
+- `nix-zerobrew.enableRosetta`
+- `nix-zerobrew.packageRosetta`
+- `nix-zerobrew.prefixes.<name>.enable`
+- `nix-zerobrew.prefixes.<name>.prefix`
+- `nix-zerobrew.prefixes.<name>.storeDir`
+- `nix-zerobrew.prefixes.<name>.dbDir`
+- `nix-zerobrew.prefixes.<name>.cacheDir`
+- `nix-zerobrew.prefixes.<name>.locksDir`
+- `nix-zerobrew.prefixes.<name>.linkDir`
+- `nix-zerobrew.prefixes.<name>.package`
 
-Create a test configuration to verify the module loads:
-```bash
-nix eval .#darwinModules.default --apply 'x: "ok"'
-```
+### Internal defaults
 
-## Potential Issues to Watch For
+- `nix-zerobrew.defaultArm64Prefix = "/opt/zerobrew"`
+- `nix-zerobrew.defaultIntelPrefix = "/usr/local/zerobrew"`
 
-1. **Cargo.lock handling**: The `cargoLock.lockFile` approach may need `cargoHash` instead
-2. **Binary name**: Verify if the output is `zb` or `zb_cli`
-3. **Darwin frameworks**: May need additional frameworks like `CoreFoundation`
-4. **Git dependencies**: If zerobrew has git dependencies in Cargo.lock, they need `outputHashes`
+## Validation Matrix
 
-## Quick Fixes Reference
+### Green checks
 
-### If cargoHash is needed instead of cargoLock:
-```nix
-# In pkgs/zerobrew/default.nix, replace cargoLock with:
-cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-# Then run nix build and use the hash from the error message
-```
+- `nix flake check`
+- `nix flake check --all-systems`
+- `nix build .#zerobrew`
+- `./result/bin/zb --help`
+- nix-darwin module evaluation with `enableRosetta = true`
 
-### If additional frameworks needed:
-```nix
-buildInputs = [
-  openssl
-] ++ lib.optionals stdenv.isDarwin [
-  darwin.apple_sdk.frameworks.Security
-  darwin.apple_sdk.frameworks.SystemConfiguration
-  darwin.apple_sdk.frameworks.CoreFoundation
-  darwin.apple_sdk.frameworks.CoreServices
-];
-```
+### Runtime scenarios to verify on real hosts
 
-## Success Criteria
+1. Fresh install on Apple Silicon (`enable = true`, default prefix)
+2. Fresh install on Intel (`enable = true`, default prefix)
+3. Existing unmanaged prefix with `autoMigrate = false` fails with actionable error
+4. Existing unmanaged prefix with `autoMigrate = true` takes ownership without clobbering managed paths
+5. `arch -x86_64 zb --help` on Apple Silicon with `enableRosetta = true`
 
-1. `nix flake check` passes
-2. `nix build .#zerobrew` produces a working binary
-3. `./result/bin/zb --help` shows usage information
-4. Module can be imported in a nix-darwin configuration
+## Assumptions and Defaults
+
+- Behavioral parity is preferred over strict option-name parity.
+- Rosetta remains optional and off by default.
+- Zerobrew remains Darwin-only.
+- Existing minimal configs remain valid (`enable`, `user`, optional `autoMigrate`).
+
+## Follow-up Work (Nice to Have)
+
+1. Add host-level integration tests for migration scenarios using darwin VM automation.
+2. Add CI matrix that executes `checks` on both Darwin architectures.
+3. Track upstream Zerobrew release updates with a documented bump workflow.

@@ -15,7 +15,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "zerobrew";
-  version = "0.1.0"; # TODO: Extract from Cargo.toml or use source rev
+  version = (lib.importTOML "${zerobrew-src}/zb_cli/Cargo.toml").package.version;
 
   src = zerobrew-src;
 
@@ -51,7 +51,7 @@ rustPlatform.buildRustPackage {
   meta = with lib; {
     description = "A fast macOS package manager";
     homepage = "https://github.com/lucasgelfond/zerobrew";
-    license = licenses.mit; # Check actual license
+    license = with licenses; [ mit asl20 ];
     maintainers = [ ];
     platforms = platforms.darwin;
     mainProgram = "zb";

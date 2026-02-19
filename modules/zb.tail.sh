@@ -5,7 +5,8 @@
 # zerobrew binary.
 #
 # Expected environment variables:
-# - ZEROBREW_PREFIX: The zerobrew prefix (/opt/zerobrew)
+# - ZEROBREW_ROOT: Root directory for zerobrew data
+# - ZEROBREW_PREFIX: Link prefix directory (contains bin/, Cellar/, opt/, ...)
 # - NIX_ZB_BIN: Path to the Nix-built zb binary
 
 # Filter environment and exec the real binary

@@ -1,21 +1,23 @@
 # nix-zerobrew
 
-Declarative [Zerobrew](https://github.com/lucasgelfond/zerobrew) installation manager for [nix-darwin](https://github.com/LnL7/nix-darwin).
+`nix-zerobrew` manages [Zerobrew](https://github.com/lucasgelfond/zerobrew) installations on macOS with [nix-darwin](https://github.com/LnL7/nix-darwin).
 
-## Overview
+It pins the Zerobrew binary through Nix and manages prefix lifecycle (creation, migration, permissions, launchers, and shell integration) in a way that is operationally similar to `nix-homebrew`.
 
-nix-zerobrew provides a nix-darwin module for managing Zerobrew installations on macOS. Zerobrew is a fast, modern macOS package manager written in Rust that provides 5-20x faster installation speeds compared to Homebrew.
+Like `nix-homebrew`, this project manages the package manager itself, not the full set of installed packages.
 
-### Key Features
+## Highlights
 
-- **Declarative Configuration**: Manage your Zerobrew installation through Nix
-- **Nix-built Binary**: Zerobrew is compiled from source via Nix
-- **Shell Integration**: Automatic PATH configuration for bash, zsh, and fish
-- **Migration Support**: Can migrate existing Zerobrew installations
+- Declarative Zerobrew installation via nix-darwin
+- Prefix lifecycle management with migration safeguards
+- Multi-prefix support with sensible defaults
+- Optional Rosetta prefix setup on Apple Silicon
+- Unified `zb` launcher that picks the correct prefix by architecture
+- Shell integration for bash, zsh, and fish
 
 ## Installation
 
-Add nix-zerobrew to your flake inputs:
+Add `nix-zerobrew` to your flake inputs:
 
 ```nix
 {
@@ -27,133 +29,151 @@ Add nix-zerobrew to your flake inputs:
     nix-zerobrew.url = "github:yourusername/nix-zerobrew";
     nix-zerobrew.inputs.nixpkgs.follows = "nixpkgs";
   };
+}
+```
 
-  outputs = { self, nixpkgs, nix-darwin, nix-zerobrew, ... }: {
-    darwinConfigurations.myhost = nix-darwin.lib.darwinSystem {
-      modules = [
-        nix-zerobrew.darwinModules.default
-        {
-          nix-zerobrew = {
-            enable = true;
-            user = "yourusername";
-          };
-        }
-      ];
-    };
+## Quick Start
+
+### New Installation
+
+```nix
+{
+  modules = [
+    nix-zerobrew.darwinModules.default
+    {
+      nix-zerobrew = {
+        enable = true;
+        user = "yourusername";
+      };
+    }
+  ];
+}
+```
+
+### Existing Zerobrew Installation
+
+```nix
+{
+  modules = [
+    nix-zerobrew.darwinModules.default
+    {
+      nix-zerobrew = {
+        enable = true;
+        user = "yourusername";
+        autoMigrate = true;
+      };
+    }
+  ];
+}
+```
+
+## Rosetta (Apple Silicon)
+
+Enable an Intel prefix and architecture-aware launcher behavior:
+
+```nix
+{
+  nix-zerobrew = {
+    enable = true;
+    user = "yourusername";
+    enableRosetta = true;
   };
 }
 ```
 
+Then use `arch -x86_64 zb ...` when targeting Intel binaries.
+
 ## Configuration Options
 
-### Basic Options
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enable` | `bool` | `false` | Enable Zerobrew management |
+| `enableRosetta` | `bool` | `false` | Set up Intel prefix for Rosetta on Apple Silicon |
+| `package` | `package` | flake default | Native Zerobrew package |
+| `packageRosetta` | `null or package` | x86_64 package default | Zerobrew package for Intel launchers on Apple Silicon |
+| `user` | `string` | required | Owner of managed directories |
+| `group` | `string` | `"admin"` | Group owner of managed directories |
+| `autoMigrate` | `bool` | `false` | Allow taking over existing installations |
+| `extraEnv` | `attrsOf string` | `{}` | Additional environment variables for launchers |
+| `prefixes` | `attrsOf submodule` | auto defaults | Prefix map (advanced) |
+| `enableBashIntegration` | `bool` | `true` | PATH integration for bash |
+| `enableZshIntegration` | `bool` | `true` | PATH integration for zsh |
+| `enableFishIntegration` | `bool` | `true` | PATH integration for fish |
+
+### `prefixes.<name>` options
 
 | Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enable` | bool | `false` | Whether to enable Zerobrew management |
-| `user` | string | required | User owning Zerobrew directories |
-| `group` | string | `"admin"` | Group owning Zerobrew directories |
-| `autoMigrate` | bool | `false` | Allow migration of existing installations |
+|---|---|---|---|
+| `enable` | `bool` | none | Whether this prefix is active |
+| `prefix` | `string` | attribute key | Zerobrew root directory |
+| `storeDir` | `string` | `${prefix}/store` | Content-addressable store |
+| `dbDir` | `string` | `${prefix}/db` | Metadata DB directory |
+| `cacheDir` | `string` | `${prefix}/cache` | Download cache directory |
+| `locksDir` | `string` | `${prefix}/locks` | Lock directory |
+| `linkDir` | `string` | `${prefix}/prefix` | Link prefix (`bin`, `Cellar`, `opt`, ...) |
+| `package` | `null or package` | `null` | Override launcher package for this prefix |
 
-### Environment
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `extraEnv` | attrs | `{}` | Extra environment variables for Zerobrew |
-
-### Shell Integration
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enableBashIntegration` | bool | `true` | Add Zerobrew to bash PATH |
-| `enableZshIntegration` | bool | `true` | Add Zerobrew to zsh PATH |
-| `enableFishIntegration` | bool | `true` | Add Zerobrew to fish PATH |
-
-## Example Configuration
+## Advanced Prefix Example
 
 ```nix
 {
   nix-zerobrew = {
     enable = true;
     user = "alice";
-    group = "admin";
-    autoMigrate = true;
 
-    extraEnv = {
-      ZEROBREW_NO_ANALYTICS = "1";
+    prefixes = {
+      "/opt/zerobrew" = {
+        enable = true;
+      };
+
+      "/Volumes/FastSSD/zerobrew" = {
+        enable = true;
+        linkDir = "/Volumes/FastSSD/zerobrew/prefix";
+      };
     };
-
-    # Shell integrations (all enabled by default)
-    enableBashIntegration = true;
-    enableZshIntegration = true;
-    enableFishIntegration = true;
   };
 }
 ```
 
-## Directory Structure
-
-nix-zerobrew creates the following directory structure:
-
-```
-/opt/zerobrew/
-  store/           # Content-addressable package store (SHA256)
-  db/              # SQLite database for package metadata
-  cache/           # Download cache
-  locks/           # Lock files for concurrent operations
-  prefix/          # User-facing installation
-    bin/           # Executables (including zb)
-    Cellar/        # Installed packages
-    opt/           # Version-independent links
-    lib/           # Shared libraries
-    include/       # Header files
-    share/         # Shared data
-    etc/           # Configuration files
-```
-
 ## Usage
 
-After activation, use the `zb` command:
+After activation, use `zb`:
 
 ```bash
-# Install a package
+zb --help
 zb install jq
-
-# Search for packages
 zb search ripgrep
-
-# List installed packages
 zb list
-
-# Uninstall a package
 zb uninstall jq
 ```
 
-## Differences from nix-homebrew
+## Parity Notes vs nix-homebrew
 
-| Aspect | nix-homebrew | nix-zerobrew |
-|--------|--------------|--------------|
-| Package Manager | Homebrew (Ruby) | Zerobrew (Rust) |
-| Prefix | `/opt/homebrew` (ARM) or `/usr/local` (Intel) | `/opt/zerobrew` (fixed) |
-| Taps | Complex tap management | No taps needed |
-| Rosetta | Separate prefixes for ARM/Intel | Single prefix |
-| CLI | `brew` | `zb` |
-| Build | Ruby scripts | Compiled Rust binary |
+`nix-zerobrew` intentionally follows `nix-homebrew` operational patterns where they make sense:
 
-## Building from Source
+- Prefix lifecycle handled in activation scripts
+- Safe migration flow with explicit `autoMigrate`
+- Optional Rosetta workflow on Apple Silicon
+- Architecture-aware unified launcher in system profile
+- Shell integration toggles
 
-To build the zerobrew package directly:
+Homebrew-specific concepts (for example tap management) are not implemented because Zerobrew does not use a tap model.
+
+## Build and Verify
 
 ```bash
+nix flake check --all-systems
 nix build .#zerobrew
 ./result/bin/zb --help
 ```
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT License for this repository.
+
+Upstream Zerobrew is dual-licensed (MIT OR Apache-2.0).
 
 ## Acknowledgments
 
 - [Zerobrew](https://github.com/lucasgelfond/zerobrew) by Lucas Gelfond
-- [nix-homebrew](https://github.com/zhaofengli/nix-homebrew) for inspiration and patterns
+- [nix-homebrew](https://github.com/zhaofengli/nix-homebrew) for lifecycle and integration patterns
