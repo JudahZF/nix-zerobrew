@@ -8,10 +8,6 @@
 # Uses:
 #
 # - ZEROBREW_ROOT
-# - ZEROBREW_STORE_DIR
-# - ZEROBREW_DB_DIR
-# - ZEROBREW_CACHE_DIR
-# - ZEROBREW_LOCKS_DIR
 # - ZEROBREW_LINK_DIR
 # - NIX_ZEROBREW_UID
 # - NIX_ZEROBREW_GID
@@ -99,12 +95,18 @@ file_not_grpowned() {
 
 # Initialize or repair the Zerobrew directory structure for one prefix.
 initialize_zerobrew_layout() {
+  local store_dir db_dir cache_dir locks_dir
+  store_dir="${ZEROBREW_ROOT}/store"
+  db_dir="${ZEROBREW_ROOT}/db"
+  cache_dir="${ZEROBREW_ROOT}/cache"
+  locks_dir="${ZEROBREW_ROOT}/locks"
+
   directories=(
     "${ZEROBREW_ROOT}"
-    "${ZEROBREW_STORE_DIR}"
-    "${ZEROBREW_DB_DIR}"
-    "${ZEROBREW_CACHE_DIR}"
-    "${ZEROBREW_LOCKS_DIR}"
+    "${store_dir}"
+    "${db_dir}"
+    "${cache_dir}"
+    "${locks_dir}"
     "${ZEROBREW_LINK_DIR}"
     "${ZEROBREW_LINK_DIR}/bin"
     "${ZEROBREW_LINK_DIR}/Cellar"

@@ -1,43 +1,43 @@
-# nix-zerobrew Parity Plan with nix-homebrew
+# nix-zerobrew Compatibility Notes
 
 ## Summary
 
-This plan tracks feature-parity work focused on behavior and operations rather than Homebrew-specific semantics.
+`nix-zerobrew` follows `nix-homebrew` operational patterns where they are tool-agnostic, while exposing only features that exist in Zerobrew.
 
-Parity target:
+## Compatibility Targets
 
 - Comparable install/activation lifecycle safety
 - Comparable migration and ownership behavior
 - Comparable shell and launcher ergonomics
 - Optional Rosetta workflow on Apple Silicon
 
-Non-goals:
+## Explicit Non-Goals
 
 - Homebrew tap semantics (`taps`, mutable/declarative tap models)
+- Homebrew code patching (`patchBrew`)
 - Declarative management of all installed package formulas
 
-## Current Status
+## Current Interface
 
-- [x] Prefix lifecycle management is activation-driven and migration-safe.
-- [x] Multi-prefix configuration model is implemented (`nix-zerobrew.prefixes`).
-- [x] Unified architecture-aware launcher is implemented (`zb` in system profile).
-- [x] Optional Rosetta prefix support is implemented (`enableRosetta`).
-- [x] Shell integration toggles are implemented (bash/zsh/fish).
-- [x] Flake smoke checks validate CLI execution (`checks.<system>.zerobrew-help`).
-- [x] Docs updated for parity-oriented workflows.
+### Top-level options
 
-## Public Interface Additions
-
-### New options
-
+- `nix-zerobrew.enable`
 - `nix-zerobrew.enableRosetta`
+- `nix-zerobrew.package`
 - `nix-zerobrew.packageRosetta`
+- `nix-zerobrew.autoMigrate`
+- `nix-zerobrew.user`
+- `nix-zerobrew.group`
+- `nix-zerobrew.prefixes`
+- `nix-zerobrew.extraEnv`
+- `nix-zerobrew.enableBashIntegration`
+- `nix-zerobrew.enableZshIntegration`
+- `nix-zerobrew.enableFishIntegration`
+
+### Prefix options
+
 - `nix-zerobrew.prefixes.<name>.enable`
 - `nix-zerobrew.prefixes.<name>.prefix`
-- `nix-zerobrew.prefixes.<name>.storeDir`
-- `nix-zerobrew.prefixes.<name>.dbDir`
-- `nix-zerobrew.prefixes.<name>.cacheDir`
-- `nix-zerobrew.prefixes.<name>.locksDir`
 - `nix-zerobrew.prefixes.<name>.linkDir`
 - `nix-zerobrew.prefixes.<name>.package`
 
@@ -48,31 +48,24 @@ Non-goals:
 
 ## Validation Matrix
 
-### Green checks
+### Build and checks
 
 - `nix flake check`
 - `nix flake check --all-systems`
 - `nix build .#zerobrew`
 - `./result/bin/zb --help`
-- nix-darwin module evaluation with `enableRosetta = true`
 
-### Runtime scenarios to verify on real hosts
+### Runtime scenarios
 
 1. Fresh install on Apple Silicon (`enable = true`, default prefix)
 2. Fresh install on Intel (`enable = true`, default prefix)
 3. Existing unmanaged prefix with `autoMigrate = false` fails with actionable error
-4. Existing unmanaged prefix with `autoMigrate = true` takes ownership without clobbering managed paths
+4. Existing unmanaged prefix with `autoMigrate = true` takes ownership safely
 5. `arch -x86_64 zb --help` on Apple Silicon with `enableRosetta = true`
 
 ## Assumptions and Defaults
 
 - Behavioral parity is preferred over strict option-name parity.
+- Zerobrew-only feature truth is preferred over compatibility shims.
 - Rosetta remains optional and off by default.
 - Zerobrew remains Darwin-only.
-- Existing minimal configs remain valid (`enable`, `user`, optional `autoMigrate`).
-
-## Follow-up Work (Nice to Have)
-
-1. Add host-level integration tests for migration scenarios using darwin VM automation.
-2. Add CI matrix that executes `checks` on both Darwin architectures.
-3. Track upstream Zerobrew release updates with a documented bump workflow.

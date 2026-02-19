@@ -29,38 +29,6 @@ let
         default = name;
       };
 
-      storeDir = lib.mkOption {
-        description = ''
-          Content-addressable store directory for this prefix.
-        '';
-        type = types.str;
-        default = "${config.prefix}/store";
-      };
-
-      dbDir = lib.mkOption {
-        description = ''
-          Metadata database directory for this prefix.
-        '';
-        type = types.str;
-        default = "${config.prefix}/db";
-      };
-
-      cacheDir = lib.mkOption {
-        description = ''
-          Download cache directory for this prefix.
-        '';
-        type = types.str;
-        default = "${config.prefix}/cache";
-      };
-
-      locksDir = lib.mkOption {
-        description = ''
-          Lock directory for this prefix.
-        '';
-        type = types.str;
-        default = "${config.prefix}/locks";
-      };
-
       linkDir = lib.mkOption {
         description = ''
           User-facing install prefix used for links (`bin`, `Cellar`, `opt`, etc).
@@ -88,9 +56,10 @@ let
     else cfg.defaultIntelPrefix;
   hostDefaultPrefix = lib.attrByPath [ hostDefaultPrefixKey ] null cfg.prefixes;
 
-  makePrefixLauncher = prefix: let
-    selectedPackage = if prefix.package != null then prefix.package else cfg.package;
-  in
+  makePrefixLauncher = prefix:
+    let
+      selectedPackage = if prefix.package != null then prefix.package else cfg.package;
+    in
     pkgs.writeScriptBin "zb" (
       ''
         #!/bin/bash
@@ -122,10 +91,6 @@ let
     in
     ''
       ZEROBREW_ROOT="${prefix.prefix}"
-      ZEROBREW_STORE_DIR="${prefix.storeDir}"
-      ZEROBREW_DB_DIR="${prefix.dbDir}"
-      ZEROBREW_CACHE_DIR="${prefix.cacheDir}"
-      ZEROBREW_LOCKS_DIR="${prefix.locksDir}"
       ZEROBREW_LINK_DIR="${prefix.linkDir}"
       NIX_ZEROBREW_MARKER="$ZEROBREW_ROOT/${nixMarker}"
 
@@ -331,7 +296,7 @@ in {
     };
   };
 
-  config = lib.mkIf (cfg.enable) {
+  config = lib.mkIf cfg.enable {
     assertions = [
       {
         assertion = pkgs.stdenv.hostPlatform.isDarwin;

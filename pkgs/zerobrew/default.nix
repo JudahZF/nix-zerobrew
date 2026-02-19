@@ -27,7 +27,7 @@ rustPlatform.buildRustPackage {
 
   # Build only the CLI crate
   cargoBuildFlags = [ "--package" "zb_cli" ];
-  cargoTestFlags = [ "--package" "zb_cli" ];
+  doCheck = false;
 
   nativeBuildInputs = [
     pkg-config

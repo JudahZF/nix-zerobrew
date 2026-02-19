@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  nix:
+    name: Nix Check and Build (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v19
+
+      - name: Configure Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: Show Nix Version
+        run: nix --version
+
+      - name: Evaluate Darwin Outputs
+        run: |
+          nix eval --raw .#packages.aarch64-darwin.zerobrew.drvPath >/dev/null
+          nix eval --raw .#packages.x86_64-darwin.zerobrew.drvPath >/dev/null
+
+      - name: Flake Check
+        run: nix flake check
+
+      - name: Build Zerobrew
+        run: nix build .#zerobrew
+
+      - name: Smoke Test
+        run: ./result/bin/zb --help

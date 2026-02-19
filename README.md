@@ -1,10 +1,16 @@
 # nix-zerobrew
 
-`nix-zerobrew` manages [Zerobrew](https://github.com/lucasgelfond/zerobrew) installations on macOS with [nix-darwin](https://github.com/LnL7/nix-darwin).
+`nix-zerobrew` manages [Zerobrew](https://github.com/lucasgelfond/zerobrew) on macOS with [nix-darwin](https://github.com/LnL7/nix-darwin).
 
-It pins the Zerobrew binary through Nix and manages prefix lifecycle (creation, migration, permissions, launchers, and shell integration) in a way that is operationally similar to `nix-homebrew`.
+It pins the Zerobrew binary through Nix and manages activation-time lifecycle concerns (directory setup, migration safeguards, ownership, launchers, Rosetta routing, and shell integration).
 
 Like `nix-homebrew`, this project manages the package manager itself, not the full set of installed packages.
+
+## Design Rule
+
+Only Zerobrew-supported capabilities are exposed as config options.
+
+Homebrew-only concepts are intentionally not implemented and do not exist as `nix-zerobrew` options.
 
 ## Highlights
 
@@ -106,12 +112,16 @@ Then use `arch -x86_64 zb ...` when targeting Intel binaries.
 |---|---|---|---|
 | `enable` | `bool` | none | Whether this prefix is active |
 | `prefix` | `string` | attribute key | Zerobrew root directory |
-| `storeDir` | `string` | `${prefix}/store` | Content-addressable store |
-| `dbDir` | `string` | `${prefix}/db` | Metadata DB directory |
-| `cacheDir` | `string` | `${prefix}/cache` | Download cache directory |
-| `locksDir` | `string` | `${prefix}/locks` | Lock directory |
 | `linkDir` | `string` | `${prefix}/prefix` | Link prefix (`bin`, `Cellar`, `opt`, ...) |
 | `package` | `null or package` | `null` | Override launcher package for this prefix |
+
+`nix-zerobrew` always uses Zerobrew's standard root layout under each configured `prefix`:
+- `${prefix}/store`
+- `${prefix}/db`
+- `${prefix}/cache`
+- `${prefix}/locks`
+
+These are intentionally not configurable because Zerobrew does not expose separate config for them.
 
 ## Advanced Prefix Example
 
@@ -141,23 +151,29 @@ After activation, use `zb`:
 
 ```bash
 zb --help
-zb install jq
-zb search ripgrep
+zb install jq ripgrep
 zb list
+zb info jq
 zb uninstall jq
+zb gc
+zb bundle --help
+zb migrate --help
 ```
 
-## Parity Notes vs nix-homebrew
+## Compatibility with nix-homebrew
 
-`nix-zerobrew` intentionally follows `nix-homebrew` operational patterns where they make sense:
+| Area | `nix-homebrew` | `nix-zerobrew` |
+|---|---|---|
+| Prefix lifecycle | Activation-managed | Activation-managed |
+| Migration guard (`autoMigrate`) | Yes | Yes |
+| Rosetta dual-prefix flow | Yes | Yes |
+| Unified launcher in system profile | `brew` | `zb` |
+| Shell integration toggles | Yes | Yes |
+| Declarative taps (`taps`) | Yes | Not supported by Zerobrew |
+| Mutable taps (`mutableTaps`) | Yes | Not supported by Zerobrew |
+| Homebrew patching (`patchBrew`) | Yes | Not applicable to Zerobrew |
 
-- Prefix lifecycle handled in activation scripts
-- Safe migration flow with explicit `autoMigrate`
-- Optional Rosetta workflow on Apple Silicon
-- Architecture-aware unified launcher in system profile
-- Shell integration toggles
-
-Homebrew-specific concepts (for example tap management) are not implemented because Zerobrew does not use a tap model.
+Unsupported Homebrew-only concepts are intentionally absent as `nix-zerobrew` options.
 
 ## Build and Verify
 
