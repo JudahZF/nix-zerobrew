@@ -9,7 +9,10 @@
     };
 
     zerobrew-src = {
-      url = "github:lucasgelfond/zerobrew";
+      type = "github";
+      owner = "lucasgelfond";
+      repo = "zerobrew";
+      ref = "v0.1.2";
       flake = false;
     };
   };

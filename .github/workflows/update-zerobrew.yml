@@ -1,0 +1,114 @@
+name: Update Zerobrew
+
+on:
+  schedule:
+    - cron: "15 14 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: zerobrew-release-update
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-zerobrew:
+    name: Check zerobrew release and open PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch latest stable release
+        id: latest_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = "lucasgelfond";
+            const repo = "zerobrew";
+            const { data } = await github.rest.repos.listReleases({
+              owner,
+              repo,
+              per_page: 20,
+            });
+
+            const release = data.find((r) => !r.draft && !r.prerelease);
+            if (!release) {
+              core.setFailed(`No stable release found for ${owner}/${repo}`);
+              return;
+            }
+
+            core.info(`Latest stable release: ${release.tag_name}`);
+            core.setOutput("tag", release.tag_name);
+            core.setOutput("url", release.html_url);
+
+      - name: Read current pinned tag and compare
+        id: compare
+        env:
+          LATEST_TAG: ${{ steps.latest_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          current_tag="$(sed -n '/zerobrew-src = {/,/};/ s/.*ref = "\(.*\)";/\1/p' flake.nix | head -n1)"
+          if [ -z "$current_tag" ]; then
+            echo "Failed to find zerobrew-src ref in flake.nix" >&2
+            exit 1
+          fi
+
+          echo "current_tag=$current_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+          if [ "$current_tag" = "$LATEST_TAG" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "zerobrew is already up to date at $current_tag"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "Update needed: $current_tag -> $LATEST_TAG"
+          fi
+
+      - name: Install Nix
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: DeterminateSystems/nix-installer-action@v19
+
+      - name: Configure Nix Cache
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: Update zerobrew tag in flake.nix
+        if: steps.compare.outputs.needs_update == 'true'
+        env:
+          LATEST_TAG: ${{ steps.latest_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "/zerobrew-src = {/,/};/ s#ref = \".*\";#ref = \"$LATEST_TAG\";#" flake.nix
+          rm -f flake.nix.bak
+
+      - name: Refresh flake.lock for zerobrew-src
+        if: steps.compare.outputs.needs_update == 'true'
+        run: nix flake update zerobrew-src
+
+      - name: Lightweight eval check
+        if: steps.compare.outputs.needs_update == 'true'
+        run: nix eval --raw .#packages.aarch64-darwin.zerobrew.drvPath >/dev/null
+
+      - name: Create pull request
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ci/zerobrew-release-update
+          base: master
+          commit-message: chore: bump zerobrew to ${{ steps.latest_release.outputs.tag }}
+          title: chore: update zerobrew to ${{ steps.latest_release.outputs.tag }}
+          body: |
+            This PR updates `zerobrew-src` to the latest stable zerobrew release.
+
+            - Previous tag: `${{ steps.compare.outputs.current_tag }}`
+            - New tag: `${{ steps.latest_release.outputs.tag }}`
+            - Lockfile: refreshed `flake.lock` for `zerobrew-src`
+            - Upstream release: ${{ steps.latest_release.outputs.url }}
+
+            Note: This repository tracks stable release tags for zerobrew. During the migration from HEAD-tracking, the first update may repin from an unreleased commit to the latest stable release commit.
