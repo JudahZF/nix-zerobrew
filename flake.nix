@@ -3,6 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     zerobrew-src = {
       url = "github:lucasgelfond/zerobrew";
@@ -10,17 +14,28 @@
     };
   };
 
-  outputs = { self, nixpkgs, zerobrew-src }: let
+  outputs = { self, nixpkgs, rust-overlay, zerobrew-src }: let
     # Systems supported by zerobrew (macOS only)
     systems = [ "aarch64-darwin" "x86_64-darwin" ];
 
+    pkgsFor = system: import nixpkgs {
+      inherit system;
+      overlays = [ rust-overlay.overlays.default ];
+    };
+
     forAllSystems = f: nixpkgs.lib.genAttrs systems (system:
-      f system nixpkgs.legacyPackages.${system}
+      f system (pkgsFor system)
     );
   in {
     packages = forAllSystems (system: pkgs: {
-      zerobrew = pkgs.callPackage ./pkgs/zerobrew {
+      zerobrew = let
+        zerobrewRust = pkgs.rust-bin.stable."1.90.0".default;
+      in pkgs.callPackage ./pkgs/zerobrew {
         inherit zerobrew-src;
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = zerobrewRust;
+          rustc = zerobrewRust;
+        };
       };
 
       default = self.packages.${system}.zerobrew;
