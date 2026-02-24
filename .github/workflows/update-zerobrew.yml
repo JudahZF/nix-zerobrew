@@ -101,8 +101,8 @@ jobs:
         with:
           branch: ci/zerobrew-release-update
           base: master
-          commit-message: chore: bump zerobrew to ${{ steps.latest_release.outputs.tag }}
-          title: chore: update zerobrew to ${{ steps.latest_release.outputs.tag }}
+          commit-message: "chore: bump zerobrew to ${{ steps.latest_release.outputs.tag }}"
+          title: "chore: update zerobrew to ${{ steps.latest_release.outputs.tag }}"
           body: |
             This PR updates `zerobrew-src` to the latest stable zerobrew release.
 
