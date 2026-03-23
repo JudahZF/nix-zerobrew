@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to publish"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Validate tag exists
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "refs/tags/$CURRENT_TAG"
+
+      - name: Generate release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/generate-release-notes.mjs > release-notes.md
+
+      - name: Create or update GitHub release
+        uses: actions/github-script@v8
+        env:
+          CURRENT_TAG: ${{ env.CURRENT_TAG }}
+        with:
+          script: |
+            const fs = require("node:fs");
+
+            const tag = process.env.CURRENT_TAG;
+            const body = fs.readFileSync("release-notes.md", "utf8");
+            const { owner, repo } = context.repo;
+
+            let release;
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag,
+              });
+
+              release = await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: existing.data.id,
+                tag_name: tag,
+                name: tag,
+                body,
+                draft: false,
+                prerelease: false,
+              });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              release = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name: tag,
+                body,
+                draft: false,
+                prerelease: false,
+              });
+            }
+
+            core.notice(`Published release ${release.data.html_url}`);
