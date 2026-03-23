@@ -7,7 +7,7 @@
 # Expected environment variables:
 # - ZEROBREW_ROOT: Root directory for zerobrew data
 # - ZEROBREW_PREFIX: Link prefix directory (contains bin/, Cellar/, opt/, ...)
-# - NIX_ZB_BIN: Path to the Nix-built zb binary
+# - NIX_ZEROBREW_BIN: Path to the Nix-built zerobrew binary
 
 # Filter environment and exec the real binary
-exec "${NIX_ZB_BIN}" "$@"
+exec "${NIX_ZEROBREW_BIN}" "$@"

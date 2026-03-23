@@ -12,7 +12,7 @@
       type = "github";
       owner = "lucasgelfond";
       repo = "zerobrew";
-      ref = "v0.1.2";
+      ref = "v0.2.1";
       flake = false;
     };
   };
@@ -45,10 +45,14 @@
     });
 
     checks = forAllSystems (system: pkgs: {
-      zerobrew-help = pkgs.runCommandLocal "zerobrew-help" {
+      zerobrew-cli-smoke = pkgs.runCommandLocal "zerobrew-cli-smoke" {
         nativeBuildInputs = [ self.packages.${system}.zerobrew ];
       } ''
         zb --help > "$out"
+        zb update --help >/dev/null
+        zb outdated --help >/dev/null
+        zbx > zbx.out 2>&1 || [ "$?" -eq 1 ]
+        grep -q "Usage: zbx" zbx.out
       '';
     });
 

@@ -13,7 +13,7 @@ Declarative [Zerobrew](https://github.com/lucasgelfond/zerobrew) management for 
 - Prefix lifecycle management with migration safeguards
 - Multi-prefix support with sensible defaults
 - Optional Rosetta prefix for Intel binaries on Apple Silicon
-- Architecture-aware `zb` launcher that dispatches to the correct prefix
+- Architecture-aware `zb` and `zbx` launchers that dispatch to the correct prefix
 - Shell integration for bash, zsh, and fish
 
 ## Installation
@@ -72,6 +72,8 @@ If you already have Zerobrew installed outside of Nix, set `autoMigrate` to allo
 
 Without `autoMigrate`, nix-zerobrew will error if it finds an existing installation that it doesn't manage (indicated by the absence of a `.managed_by_nix_darwin` marker file).
 
+Managed installs created by older `nix-zerobrew` releases used a legacy `${root}/prefix` link tree. When you upgrade to the current module, nix-zerobrew automatically migrates that managed layout to the upstream-compatible root-as-prefix layout.
+
 ## Rosetta (Apple Silicon)
 
 On Apple Silicon Macs, you can set up a second Intel-architecture prefix under Rosetta 2:
@@ -115,9 +117,9 @@ Each prefix represents a Zerobrew installation root. nix-zerobrew creates the fo
 - `${prefix}/db` -- package database
 - `${prefix}/cache` -- download cache
 - `${prefix}/locks` -- lock files
-- `${prefix}/prefix/bin`, `${prefix}/prefix/Cellar`, `${prefix}/prefix/opt`, `${prefix}/prefix/lib`, `${prefix}/prefix/include`, `${prefix}/prefix/share`, `${prefix}/prefix/etc` -- user-facing link directory
+- `${prefix}/bin`, `${prefix}/Cellar`, `${prefix}/opt`, `${prefix}/lib`, `${prefix}/include`, `${prefix}/share`, `${prefix}/etc` -- default user-facing link directory
 
-This layout matches Zerobrew's internal structure and is not independently configurable.
+This matches upstream Zerobrew's current macOS layout. If you need a non-standard link location, you can still override `prefixes.<name>.linkDir` explicitly.
 
 #### `prefixes.<name>` options
 
@@ -125,10 +127,12 @@ This layout matches Zerobrew's internal structure and is not independently confi
 |---|---|---|---|
 | `enable` | `bool` | varies by architecture | Whether this prefix is active |
 | `prefix` | `string` | attribute key | Zerobrew root directory |
-| `linkDir` | `string` | `${prefix}/prefix` | User-facing link directory |
+| `linkDir` | `string` | `${prefix}` | User-facing link directory |
 | `package` | `null or package` | `null` (falls back to `nix-zerobrew.package`) | Override the Zerobrew package for this prefix |
 
 By default on Apple Silicon, the ARM64 prefix (`/opt/zerobrew`) is enabled and the Intel prefix (`/usr/local/zerobrew`) is disabled unless `enableRosetta` is set. On Intel Macs, only the Intel prefix is enabled.
+
+On macOS, path-sensitive packages may fail if the effective `linkDir` exceeds 13 characters. nix-zerobrew warns during activation when this happens, but still allows explicit long paths for advanced setups.
 
 ### Advanced Prefix Example
 
@@ -159,6 +163,9 @@ After activation, the `zb` command is available system-wide:
 ```bash
 zb --help                       # show help
 zb install jq ripgrep           # install packages
+zb update                       # refresh zerobrew metadata
+zb outdated                     # show outdated packages
+zb outdated --json              # machine-readable outdated output
 zb uninstall jq                 # uninstall a package
 zb bundle                       # install from Brewfile
 zb bundle install -f myfile     # install from a custom file
@@ -169,7 +176,17 @@ zb reset                        # uninstall everything
 zbx jq --version                # run a package without linking it
 ```
 
-On Apple Silicon with Rosetta enabled, use `arch -x86_64 zb ...` to target the Intel prefix.
+Both `zb` and `zbx` are installed system-wide. On Apple Silicon with Rosetta enabled, use `arch -x86_64 zb ...` or `arch -x86_64 zbx ...` to target the Intel prefix.
+
+### `extraEnv` example
+
+```nix
+{
+  nix-zerobrew.extraEnv = {
+    ZEROBREW_API_URL = "https://zerobrew.internal.example/api";
+  };
+}
+```
 
 ## Build and Verify
 

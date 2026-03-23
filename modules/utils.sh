@@ -23,6 +23,8 @@ CHGRP=("/usr/bin/chgrp")
 MKDIR=("/bin/mkdir" "-p")
 TOUCH=("/usr/bin/touch")
 INSTALL=("/usr/bin/install" -d -o "root" -g "wheel" -m "0755")
+MV=("/bin/mv")
+RMDIR=("/bin/rmdir")
 
 # string formatters
 if [[ -t 1 ]]
@@ -91,6 +93,72 @@ get_group() {
 
 file_not_grpowned() {
   [[ " ${NIX_ZEROBREW_GID} " != *" $(get_group "$1") "* ]]
+}
+
+maybe_migrate_legacy_link_dir() {
+  local legacy_link_dir source_dir target_dir remaining
+  local legacy_dirs
+
+  [[ "${ZEROBREW_LINK_DIR}" == "${ZEROBREW_ROOT}" ]] || return 0
+  [[ -e "${NIX_ZEROBREW_MARKER}" ]] || return 0
+
+  legacy_link_dir="${ZEROBREW_ROOT}/prefix"
+  [[ -d "${legacy_link_dir}" ]] || return 0
+
+  legacy_dirs=(
+    "bin"
+    "Cellar"
+    "opt"
+    "lib"
+    "include"
+    "share"
+    "etc"
+  )
+
+  for dir in "${legacy_dirs[@]}"
+  do
+    source_dir="${legacy_link_dir}/${dir}"
+    if [[ -e "${source_dir}" ]] || [[ -L "${source_dir}" ]]
+    then
+      remaining=1
+      break
+    fi
+  done
+
+  [[ -n "${remaining:-}" ]] || return 0
+
+  ohai "Migrating legacy Zerobrew link directory from ${legacy_link_dir} to ${ZEROBREW_ROOT}..."
+
+  for dir in "${legacy_dirs[@]}"
+  do
+    source_dir="${legacy_link_dir}/${dir}"
+    target_dir="${ZEROBREW_ROOT}/${dir}"
+    if [[ -e "${source_dir}" ]] || [[ -L "${source_dir}" ]]
+    then
+      if [[ -e "${target_dir}" ]] || [[ -L "${target_dir}" ]]
+      then
+        error "Cannot migrate legacy Zerobrew layout because ${target_dir} already exists"
+        exit 1
+      fi
+    fi
+  done
+
+  for dir in "${legacy_dirs[@]}"
+  do
+    source_dir="${legacy_link_dir}/${dir}"
+    target_dir="${ZEROBREW_ROOT}/${dir}"
+    if [[ -e "${source_dir}" ]] || [[ -L "${source_dir}" ]]
+    then
+      "${MV[@]}" "${source_dir}" "${target_dir}"
+    fi
+  done
+
+  if [[ -z "$(/bin/ls -A "${legacy_link_dir}" 2>/dev/null)" ]]
+  then
+    "${RMDIR[@]}" "${legacy_link_dir}"
+  else
+    warn "Legacy Zerobrew link directory ${legacy_link_dir} still contains unmanaged files; leaving it in place"
+  fi
 }
 
 # Initialize or repair the Zerobrew directory structure for one prefix.
