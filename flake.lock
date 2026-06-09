@@ -30,11 +30,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1771902481,
-        "narHash": "sha256-svI5ivzggtu4KhCdoab3xR5+Btop24o7yLFtIPXrsPM=",
+        "lastModified": 1780456895,
+        "narHash": "sha256-CvRZn3Ut0scqLJ1xwQFkZwKGVBUUNBPrFVXRTMZpbfU=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "5177426d9f8f7f1827001c9749b9a9c5570d456b",
+        "rev": "7cc96a6a3fd6613cafd633250a3934483479b9a1",
         "type": "github"
       },
       "original": {
@@ -46,16 +46,16 @@
     "zerobrew-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1773515818,
-        "narHash": "sha256-qBbH4rdpRKYxkX58ljcQMxvo4BFDdTJpvVfjrb/z3fI=",
+        "lastModified": 1780118007,
+        "narHash": "sha256-x0ezVV0gxRTfs78UbAd/0xPmfZ8gm4LnmMUI9zSTS+Y=",
         "owner": "lucasgelfond",
         "repo": "zerobrew",
-        "rev": "9a7f5a8befd36962d5703a5a6df658ac46fc31e0",
+        "rev": "66737ad47727b22ccbec139b1cd7667b5a39c5e4",
         "type": "github"
       },
       "original": {
         "owner": "lucasgelfond",
-        "ref": "v0.2.1",
+        "ref": "v0.3.1",
         "repo": "zerobrew",
         "type": "github"
       }

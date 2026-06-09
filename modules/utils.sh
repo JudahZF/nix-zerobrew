@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shell utilities for nix-zerobrew
 #
 # Adapted from the Homebrew install script.
@@ -12,6 +13,8 @@
 # - NIX_ZEROBREW_UID
 # - NIX_ZEROBREW_GID
 # - NIX_ZEROBREW_MARKER
+# - NIX_ZEROBREW_EXTRA_LINK_DIRS
+# - NIX_ZEROBREW_MUTABLE_TAPS
 
 # macOS-specific commands
 STAT_PRINTF=("/usr/bin/stat" "-f")
@@ -34,7 +37,6 @@ else
   tty_escape() { :; }
 fi
 tty_mkbold() { tty_escape "1;$1"; }
-tty_underline="$(tty_escape "4;39")"
 tty_blue="$(tty_mkbold 34)"
 tty_red="$(tty_mkbold 31)"
 tty_bold="$(tty_mkbold 39)"
@@ -96,7 +98,7 @@ file_not_grpowned() {
 }
 
 maybe_migrate_legacy_link_dir() {
-  local legacy_link_dir source_dir target_dir remaining
+  local legacy_link_dir source_dir target_dir remaining moved_any overlapped_any
   local legacy_dirs
 
   [[ "${ZEROBREW_LINK_DIR}" == "${ZEROBREW_ROOT}" ]] || return 0
@@ -108,11 +110,16 @@ maybe_migrate_legacy_link_dir() {
   legacy_dirs=(
     "bin"
     "Cellar"
+    "Caskroom"
     "opt"
+    "sbin"
     "lib"
     "include"
     "share"
     "etc"
+    "var"
+    "Frameworks"
+    "Library"
   )
 
   for dir in "${legacy_dirs[@]}"
@@ -127,8 +134,6 @@ maybe_migrate_legacy_link_dir() {
 
   [[ -n "${remaining:-}" ]] || return 0
 
-  ohai "Migrating legacy Zerobrew link directory from ${legacy_link_dir} to ${ZEROBREW_ROOT}..."
-
   for dir in "${legacy_dirs[@]}"
   do
     source_dir="${legacy_link_dir}/${dir}"
@@ -137,27 +142,31 @@ maybe_migrate_legacy_link_dir() {
     then
       if [[ -e "${target_dir}" ]] || [[ -L "${target_dir}" ]]
       then
-        error "Cannot migrate legacy Zerobrew layout because ${target_dir} already exists"
-        exit 1
+        overlapped_any=1
+        warn "Legacy Zerobrew entry ${source_dir} overlaps with existing ${target_dir}; leaving the legacy entry in place and continuing without automatic merge"
+        continue
       fi
+
+      if [[ -z "${moved_any:-}" ]]
+      then
+        ohai "Migrating legacy Zerobrew link directory from ${legacy_link_dir} to ${ZEROBREW_ROOT}..."
+      fi
+
+      "${MV[@]}" "${source_dir}" "${target_dir}"
+      moved_any=1
     fi
   done
 
-  for dir in "${legacy_dirs[@]}"
-  do
-    source_dir="${legacy_link_dir}/${dir}"
-    target_dir="${ZEROBREW_ROOT}/${dir}"
-    if [[ -e "${source_dir}" ]] || [[ -L "${source_dir}" ]]
-    then
-      "${MV[@]}" "${source_dir}" "${target_dir}"
-    fi
-  done
+  if [[ -n "${overlapped_any:-}" ]] && [[ -z "${moved_any:-}" ]]
+  then
+    ohai "Found overlapping legacy Zerobrew entries in ${legacy_link_dir}; continuing activation without automatic merge"
+  fi
 
   if [[ -z "$(/bin/ls -A "${legacy_link_dir}" 2>/dev/null)" ]]
   then
     "${RMDIR[@]}" "${legacy_link_dir}"
   else
-    warn "Legacy Zerobrew link directory ${legacy_link_dir} still contains unmanaged files; leaving it in place"
+    warn "Legacy Zerobrew link directory ${legacy_link_dir} still contains remaining entries (for example overlapped legacy paths or unmanaged files); leaving it in place"
   fi
 }
 
@@ -177,13 +186,32 @@ initialize_zerobrew_layout() {
     "${locks_dir}"
     "${ZEROBREW_LINK_DIR}"
     "${ZEROBREW_LINK_DIR}/bin"
+    "${ZEROBREW_LINK_DIR}/sbin"
     "${ZEROBREW_LINK_DIR}/Cellar"
+    "${ZEROBREW_LINK_DIR}/Caskroom"
     "${ZEROBREW_LINK_DIR}/opt"
     "${ZEROBREW_LINK_DIR}/lib"
     "${ZEROBREW_LINK_DIR}/include"
     "${ZEROBREW_LINK_DIR}/share"
     "${ZEROBREW_LINK_DIR}/etc"
+    "${ZEROBREW_LINK_DIR}/var"
+    "${ZEROBREW_LINK_DIR}/Frameworks"
+    "${ZEROBREW_LINK_DIR}/Library"
   )
+
+  if [[ -n "${NIX_ZEROBREW_MUTABLE_TAPS:-}" ]]
+  then
+    directories+=("${ZEROBREW_LINK_DIR}/Library/Taps")
+  fi
+
+  if [[ "${#NIX_ZEROBREW_EXTRA_LINK_DIRS[@]}" -gt 0 ]]
+  then
+    local extra_link_dir
+    for extra_link_dir in "${NIX_ZEROBREW_EXTRA_LINK_DIRS[@]}"
+    do
+      directories+=("${ZEROBREW_LINK_DIR}/${extra_link_dir}")
+    done
+  fi
 
   group_chmods=()
   for dir in "${directories[@]}"

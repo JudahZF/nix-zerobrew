@@ -42,6 +42,9 @@ jobs:
       - name: Flake Check
         run: nix flake check
 
+      - name: Build nix-homebrew Compatibility Report
+        run: nix build .#nix-homebrew-compatibility-report
+
       - name: Build Zerobrew
         run: nix build .#zerobrew
 
