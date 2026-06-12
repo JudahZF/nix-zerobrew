@@ -12,7 +12,7 @@
       type = "github";
       owner = "lucasgelfond";
       repo = "zerobrew";
-      ref = "v0.3.1";
+      ref = "v0.3.2";
       flake = false;
     };
   };
