@@ -48,7 +48,7 @@ in rustPlatform.buildRustPackage {
 
   meta = with lib; {
     description = "A fast macOS package manager";
-    homepage = "https://github.com/lucasgelfond/zerobrew";
+    homepage = "https://github.com/zerobrewhq/zerobrew";
     license = with licenses; [ mit asl20 ];
     maintainers = [ ];
     platforms = platforms.darwin;

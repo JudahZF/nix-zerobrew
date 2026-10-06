@@ -26,7 +26,6 @@ let
           config = otherConfig // {
             nix-zerobrew = {
               enable = true;
-              user = "alice";
               package = zerobrewPackage;
               packageRosetta = zerobrewPackage;
               enableDoctorCheck = false;
@@ -37,7 +36,7 @@ let
       ];
     };
 
-  evalFor = system: extraConfig: evalForFull system extraConfig { };
+  evalFor = system: extraConfig: evalForFull system ({ user = "alice"; } // extraConfig) { };
 
   assertionOk = evaluated: builtins.all (a: a.assertion) evaluated.config.assertions;
   activation = evaluated: evaluated.config.system.activationScripts.setup-zerobrew.text;
@@ -66,6 +65,62 @@ let
   zap = evalFor "aarch64-darwin" { onActivation.cleanup = "zap"; };
   packagesTop = evalFor "aarch64-darwin" { brews = [ "jq" ]; casks = [ "iterm2" ]; masApps.Xcode = 497799835; };
   packagesPrefix = evalFor "aarch64-darwin" { prefixes."/opt/zerobrew-extra" = { enable = true; brews = [ "wget" ]; casks = [ "docker" ]; masApps.Keynote = 409183694; }; };
+  defaultUser = evalForFull "aarch64-darwin" { } { };
+  richBrew = evalFor "aarch64-darwin" {
+    brews = [{
+      name = "mysql@8.4";
+      args = [ "build-from-source" "HEAD" ];
+      link = false;
+      conflicts_with = [ "mysql" ];
+      postinstall = "echo mysql-ready";
+      restart_service = "changed";
+      start_service = true;
+    }];
+  };
+  richCask = evalFor "aarch64-darwin" {
+    casks = [{
+      name = "firefox";
+      args.appdir = "~/Applications";
+      greedy = true;
+      postinstall = "echo firefox-ready";
+    }];
+    caskArgs.no_quarantine = true;
+    greedyCasks = false;
+  };
+  linkOverwrite = evalFor "aarch64-darwin" {
+    brews = [{ name = "curl"; link = "overwrite"; }];
+  };
+  cleanupCheck = evalFor "aarch64-darwin" {
+    onActivation.cleanup = "check";
+    brews = [ "jq" ];
+  };
+  extraFlags = evalFor "aarch64-darwin" {
+    onActivation.extraFlags = [ "--verbose" ];
+    brews = [ "jq" ];
+  };
+  globalLaunch = evalFor "aarch64-darwin" {
+    global.brewfile = true;
+    global.autoUpdate = false;
+  };
+  ecosystems = evalFor "aarch64-darwin" {
+    vscode = [ "golang.go" ];
+    goPackages = [ "github.com/charmbracelet/crush" ];
+    cargoPackages = [ "ripgrep" ];
+    onActivation.upgrade = true;
+    masApps.Xcode = 497799835;
+  };
+  extraConfig = evalFor "aarch64-darwin" {
+    extraConfig = ''
+      brew "wget"
+      cask "docker"
+      mas "Keynote", id: 409183694
+      vscode "ms-python.python"
+      go "golang.org/x/tools/gopls"
+      cargo "fd"
+      tap "apple/apple"
+      whalebrew "unsupported"
+    '';
+  };
 
   cases = [
     (case "new-install" "New install evaluates with defaults and package overrides" "lifecycle" (assertionOk aarchBase && enabled aarchBase "/opt/zerobrew") "Evaluates enable/user/default prefix/package configuration on Apple Silicon.")
@@ -84,29 +139,58 @@ let
     (case "shell-integration-disabled" "Shell integrations can be disabled" "shell" (noShell.config.programs.bash.interactiveShellInit == "" && noShell.config.programs.zsh.interactiveShellInit == "" && noShell.config.programs.fish.interactiveShellInit == "") "All shell init snippets are empty when disabled.")
     (case "homebrew-ordering" "nix-darwin Homebrew activation is prepended" "activation" (has "setting up Zerobrew prefixes" (activationHomebrew withHomebrew)) "homebrew activation receives setup-zerobrew via mkBefore when homebrew.enable is true.")
     (case "lifecycle-actions" "Homebrew-like lifecycle actions emit zb commands" "packages" (has "\"$BIN_ZB\" update" (activation lifecycle) && has "\"$BIN_ZB\" upgrade" (activation lifecycle) && has "uninstall" (activation lifecycle)) "autoUpdate, upgrade, and cleanup generate corresponding Zerobrew commands.")
-    (gap "cleanup-zap" "cleanup = zap remains an intentional gap" "packages" (if assertionOk zap then "Unexpectedly accepted zap cleanup." else "Rejected by assertion until Zerobrew zap safety is verified."))
     (case "top-level-packages" "Top-level brews/casks/MAS declarations evaluate" "packages" (assertionOk packagesTop && has "bundle install" (activation packagesTop) && has "install mas" (activation packagesTop) && has "db/nix-zerobrew" (activation packagesTop)) "Top-level declarations generate Brewfile/state activation logic.")
     (case "per-prefix-packages" "Per-prefix package declarations evaluate independently" "packages" (assertionOk packagesPrefix && has "/opt/zerobrew-extra" (activation packagesPrefix) && has "Brewfile" (activation packagesPrefix) && has "state" (activation packagesPrefix)) "Prefix-local brews/casks/MAS declarations get their own activation state.")
     (case "cli-smoke" "Runtime CLI smoke compatibility is covered separately" "runtime" true "The flake check zerobrew-cli-smoke covers zb help for bundle/update/outdated/doctor/upgrade/gc/completion.")
+    (case "default-user" "user defaults to system.primaryUser" "lifecycle" (assertionOk defaultUser && defaultUser.config.nix-zerobrew.user == "alice") "Omitting nix-zerobrew.user follows nix-darwin and uses system.primaryUser.")
+    (case "link-false" "link = false installs with --no-link" "packages" (assertionOk richBrew && has "--no-link" (activation richBrew) && has "mysql@8.4" (activation richBrew)) "zb install receives --no-link for that formula.")
+    (case "build-from-source" "build-from-source arg is passed to zb" "packages" (assertionOk richBrew && has "--build-from-source" (activation richBrew)) "The source-build argument maps to zb's --build-from-source flag.")
+    (case "conflicts-with" "conflicts_with uninstalls the other formula first" "packages" (assertionOk richBrew && has "uninstall" (activation richBrew) && has "mysql" (activation richBrew)) "Conflicting formulae are uninstalled when they are already listed.")
+    (case "postinstall" "postinstall runs after the package list line changes" "packages" (assertionOk richBrew && has "echo mysql-ready" (activation richBrew) && has "nix_zb_changed" (activation richBrew)) "The shell command is guarded by a before/after zb list comparison.")
+    (case "greedy-cask" "greedy casks are upgraded during activation" "packages" (assertionOk richCask && has "Upgrading greedy cask firefox" (activation richCask) && has "cask:firefox" (activation richCask)) "zb upgrade runs for casks marked greedy.")
+    (case "cask-postinstall" "cask postinstall is emitted" "packages" (assertionOk richCask && has "echo firefox-ready" (activation richCask)) "Cask postinstall uses the same change guard as formulae.")
+    (case "cleanup-check" "cleanup = check aborts when undeclared packages are installed" "packages" (assertionOk cleanupCheck && has "not declared, aborting activation" (activation cleanupCheck) && has "\"$BIN_ZB\" list" (activation cleanupCheck)) "Activation compares zb list with the declarative state before installing.")
+    (case "extra-flags" "onActivation.extraFlags are passed to bundle install" "packages" (assertionOk extraFlags && has "--verbose" (activation extraFlags) && has "bundle install" (activation extraFlags)) "Extra flags are appended to declarative zb install commands.")
+    (case "global-brewfile" "global.brewfile points zb bundle at the generated Brewfile" "launchers" (assertionOk globalLaunch && has "NIX_ZEROBREW_BUNDLE_FILE" (activation globalLaunch)) "Launchers export the activation Brewfile path. The launcher tail injects --file.")
+    (case "global-no-autoupdate" "global.autoUpdate = false exports HOMEBREW_NO_AUTO_UPDATE" "launchers" (assertionOk globalLaunch && has "HOMEBREW_NO_AUTO_UPDATE" (activation globalLaunch)) "Prefix launchers export HOMEBREW_NO_AUTO_UPDATE=1. zb itself does not auto-update formulae.")
+    (case "vscode" "vscode extensions install through the code command" "packages" (assertionOk ecosystems && has "--install-extension" (activation ecosystems) && has "golang.go" (activation ecosystems) && has "cask:visual-studio-code" (activation ecosystems)) "The code CLI installs the extension, and the cask is installed when code is missing.")
+    (case "go-packages" "go packages install with go install" "packages" (assertionOk ecosystems && has "bin/go\" install" (activation ecosystems) && has "github.com/charmbracelet/crush@latest" (activation ecosystems)) "The go formula is installed, then go install runs with @latest when the spec has no version.")
+    (case "cargo-packages" "cargo packages install with cargo install" "packages" (assertionOk ecosystems && has "bin/cargo\" install" (activation ecosystems) && has "ripgrep" (activation ecosystems)) "The rust formula is installed, then cargo install runs.")
+    (case "mas-upgrade" "onActivation.upgrade also upgrades declared MAS apps" "packages" (assertionOk ecosystems && has "mas\" upgrade" (activation ecosystems)) "mas upgrade runs for declared app IDs when upgrades are enabled.")
+    (case "extra-config" "extraConfig brew, cask, mas, vscode, go, and cargo lines are applied" "packages" (assertionOk extraConfig && has "declarative-brews: wget" (activation extraConfig) && has "declarative-casks: docker" (activation extraConfig) && has "declarative-mas: 409183694" (activation extraConfig) && has "ms-python.python" (activation extraConfig) && has "gopls@latest" (activation extraConfig) && has "bin/cargo\" install" (activation extraConfig)) "Supported Brewfile directives in extraConfig join the host default prefix.")
+    (case "extra-config-skip" "unsupported extraConfig lines are reported" "packages" (assertionOk extraConfig && has "ignoring extraConfig line" (activation extraConfig) && has "whalebrew" (activation extraConfig)) "tap and unknown directives are skipped with a warning.")
+    (gap "unsupported-args" "arbitrary brew args such as HEAD are ignored" "packages" (if has "ignoring unsupported args" (activation richBrew) && has "HEAD" (activation richBrew) then "Activation warns. zb install has no --HEAD." else "Missing warning for ignored args."))
+    (gap "service-options" "restart_service and start_service have no zb command" "packages" (if has "restart_service is not supported" (activation richBrew) && has "start_service is not supported" (activation richBrew) then "Activation warns. zb has no services command." else "Missing service warning."))
+    (gap "link-overwrite" "link = overwrite cannot replace other formulae" "packages" (if has "overwrite" (activation linkOverwrite) then "Activation warns. zb does not expose link --overwrite." else "Missing overwrite warning."))
+    (gap "cask-args" "caskArgs and cask arg attrsets are not applied" "packages" (if has "caskArgs is accepted" (activation richCask) && has "appdir" (activation richCask) then "Activation warns. zb has no cask install options." else "Missing cask arg warning."))
+    (gap "cleanup-zap" "cleanup = zap remains an intentional gap" "packages" (if assertionOk zap then "Unexpectedly accepted zap cleanup." else "Rejected by assertion until Zerobrew exposes uninstall --zap."))
+    (gap "shell-integration-default" "shell integration defaults on" "shell" "nix-darwin defaults shell integration off. nix-zerobrew keeps it on so existing shells retain PATH.")
+    (gap "single-prefix-option" "homebrew.prefix is not a single nix-zerobrew option" "prefixes" "nix-zerobrew uses /opt/zerobrew and /usr/local/zerobrew, including an optional Rosetta prefix, instead of one homebrew.prefix.")
+    (gap "tap-names" "plain tap names are not fetched" "taps" "Taps are Nix packages linked into Library/Taps, matching nix-homebrew. A bare GitHub tap name cannot be cloned by zb.")
+    (gap "nix-homebrew-trust" "nix-homebrew trust entries have no zb equivalent" "taps" "zb has no trust or untrust command.")
+    (gap "go-uninstall" "removed Go packages are not uninstalled" "packages" "go install has no uninstall command, so cleanup drops Go packages from nix-zerobrew state only.")
   ];
 
   passCount = lib.length (lib.filter (c: c.status == "pass") cases);
+  gapCount = lib.length (lib.filter (c: c.status == "gap") cases);
+  failCount = lib.length (lib.filter (c: c.status == "fail") cases);
   totalCount = lib.length cases;
-  nonPassCount = totalCount - passCount;
   percent = (passCount * 100) / totalCount;
   report = {
     title = "nix-homebrew compatibility";
-    summary = { passed = passCount; nonPass = nonPassCount; total = totalCount; inherit percent; };
+    summary = { passed = passCount; gap = gapCount; failed = failCount; total = totalCount; inherit percent; };
     inherit cases;
   };
   json = builtins.toJSON report;
   markdownCases = lib.concatMapStrings (c: ''
   - `${c.status}` `${c.id}` — ${c.title}: ${c.details}
   '') cases;
-  barWidth = 560;
-  passWidth = (barWidth * passCount) / totalCount;
-  failWidth = barWidth - passWidth;
-in pkgs.runCommandLocal "nix-homebrew-compatibility-report" { } ''
+  failLines = lib.concatMapStrings (c: ''
+    echo "fail ${c.id}: ${c.title}" >&2
+  '') (lib.filter (c: c.status == "fail") cases);
+in pkgs.runCommandLocal "nix-homebrew-compatibility-report" {
+  nativeBuildInputs = [ pkgs.python3 ];
+} ''
   mkdir -p "$out"
   cat > "$out/report.json" <<'EOF'
   ${json}
@@ -114,20 +198,22 @@ in pkgs.runCommandLocal "nix-homebrew-compatibility-report" { } ''
   cat > "$out/report.md" <<'EOF'
   # nix-homebrew compatibility
 
-  ${toString passCount}/${toString totalCount} checks passing (${toString percent}%). Non-passing checks are compatibility gaps and do not make this derivation fail.
+  ${toString passCount}/${toString totalCount} checks passing (${toString percent}%). ${toString gapCount} gaps are unsupported Homebrew behavior. ${toString failCount} failures mean a supported check regressed.
 
   ${markdownCases}
   EOF
-  cat > "$out/nix-homebrew-compatibility.svg" <<'EOF'
-  <svg xmlns="http://www.w3.org/2000/svg" width="760" height="128" viewBox="0 0 760 128" role="img" aria-label="nix-homebrew compatibility: ${toString passCount}/${toString totalCount} passing (${toString percent}%)">
-    <rect width="760" height="128" rx="14" fill="#0f172a"/>
-    <text x="24" y="34" fill="#e2e8f0" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="20" font-weight="700">nix-homebrew compatibility: ${toString passCount}/${toString totalCount} passing (${toString percent}%)</text>
-    <rect x="24" y="54" width="${toString barWidth}" height="24" rx="12" fill="#ef4444"/>
-    <rect x="24" y="54" width="${toString passWidth}" height="24" rx="12" fill="#22c55e"/>
-    <text x="604" y="72" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">non-fatal report</text>
-    <circle cx="32" cy="102" r="6" fill="#22c55e"/><text x="44" y="106" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">pass</text>
-    <circle cx="98" cy="102" r="6" fill="#ef4444"/><text x="110" y="106" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">fail/gap</text>
-    <text x="196" y="106" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">Individual compatibility gaps do not fail CI or nix flake check.</text>
-  </svg>
-  EOF
+  python3 ${./chart.py} \
+    --history ${../../docs/compatibility-history.json} \
+    --out "$out/nix-homebrew-compatibility.svg" \
+    --summary "$out/summary.json" \
+    --stale "$out/STALE" \
+    --pass-count ${toString passCount} \
+    --gap-count ${toString gapCount} \
+    --fail-count ${toString failCount} \
+    --total-count ${toString totalCount}
+  ${failLines}
+  if [ ${toString failCount} -ne 0 ]; then
+    echo "nix-homebrew compatibility suite failed" >&2
+    exit 1
+  fi
 ''

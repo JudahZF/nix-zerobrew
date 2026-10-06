@@ -115,7 +115,7 @@ async function collectUpstreamNotes(previousZerobrewRev, currentZerobrewRev) {
   }
 
   const compare = await githubRequest(
-    `/repos/lucasgelfond/zerobrew/compare/${previousZerobrewRev}...${currentZerobrewRev}`,
+    `/repos/zerobrewhq/zerobrew/compare/${previousZerobrewRev}...${currentZerobrewRev}`,
   );
 
   const commits = (compare.commits ?? []).map((commit) => {
@@ -193,7 +193,7 @@ const lines = [
       ? "- Compare: no upstream changes in the pinned zerobrew revision"
       : "- Compare: first release with zerobrew notes",
   currentZerobrewTag
-    ? `- Upstream release: https://github.com/lucasgelfond/zerobrew/releases/tag/${encodeURIComponent(currentZerobrewTag)}`
+    ? `- Upstream release: https://github.com/zerobrewhq/zerobrew/releases/tag/${encodeURIComponent(currentZerobrewTag)}`
     : "- Upstream release: unavailable",
   "",
   ...bulletList(upstreamNotes.commits, "No upstream zerobrew commits between pinned revisions."),

@@ -10,9 +10,9 @@
 
     zerobrew-src = {
       type = "github";
-      owner = "lucasgelfond";
+      owner = "zerobrewhq";
       repo = "zerobrew";
-      ref = "v0.3.1";
+      ref = "v0.3.5";
       flake = false;
     };
   };
@@ -32,7 +32,7 @@
         nixpkgs.lib.genAttrs systems (system: f system (pkgsFor system));
     in {
       packages = forAllSystems (system: pkgs: {
-        zerobrew = let zerobrewRust = pkgs.rust-bin.stable."1.95.0".default;
+        zerobrew = let zerobrewRust = pkgs.rust-bin.stable."1.96.0".default;
         in pkgs.callPackage ./pkgs/zerobrew {
           inherit zerobrew-src;
           rustPlatform = pkgs.makeRustPlatform {
@@ -47,7 +47,15 @@
         default = self.packages.${system}.zerobrew;
       });
 
-      checks = forAllSystems (system: pkgs: {
+      checks = forAllSystems (system: pkgs:
+      let
+        nix-homebrew-compatibility = import ./tests/nix-homebrew-compat {
+          inherit pkgs;
+          lib = nixpkgs.lib;
+          module = ./modules;
+          zerobrewPackage = pkgs.hello;
+        };
+      in {
         zerobrew-cli-smoke = pkgs.runCommandLocal "zerobrew-cli-smoke" {
           nativeBuildInputs = [ self.packages.${system}.zerobrew ];
         } ''
@@ -68,12 +76,24 @@
           grep -q "Usage: zbx" zbx.out
         '';
 
-        nix-homebrew-compatibility = import ./tests/nix-homebrew-compat {
-          inherit pkgs;
-          lib = nixpkgs.lib;
-          module = ./modules;
-          zerobrewPackage = pkgs.hello;
-        };
+        inherit nix-homebrew-compatibility;
+
+        nix-homebrew-compatibility-graph = pkgs.runCommandLocal "nix-homebrew-compatibility-graph" {
+          report = nix-homebrew-compatibility;
+        } ''
+          if [ -e "$report/STALE" ]; then
+            cat "$report/STALE" >&2
+            exit 1
+          fi
+          if ! cmp -s "$report/nix-homebrew-compatibility.svg" ${./docs/nix-homebrew-compatibility.svg}; then
+            echo "docs/nix-homebrew-compatibility.svg does not match the compatibility history." >&2
+            diff -u ${./docs/nix-homebrew-compatibility.svg} "$report/nix-homebrew-compatibility.svg" >&2 || true
+            echo "Refresh it with: scripts/update-compatibility-graph.sh" >&2
+            exit 1
+          fi
+          mkdir "$out"
+          cp "$report/nix-homebrew-compatibility.svg" "$out/nix-homebrew-compatibility.svg"
+        '';
 
         module-eval = pkgs.runCommandLocal "nix-zerobrew-module-eval" {
           nativeBuildInputs = [ pkgs.nix ];

@@ -104,6 +104,30 @@ let
           }
         '';
       };
+
+      vscode = lib.mkOption {
+        description = ''
+          Visual Studio Code extension ids to install in this prefix.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+      };
+
+      goPackages = lib.mkOption {
+        description = ''
+          Go module packages to install with `go install` in this prefix.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+      };
+
+      cargoPackages = lib.mkOption {
+        description = ''
+          Cargo packages to install with `cargo install` in this prefix.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+      };
     };
   });
 
@@ -128,9 +152,11 @@ let
       export HOMEBREW_PREFIX="$ZEROBREW_PREFIX"
       export HOMEBREW_CELLAR="$ZEROBREW_PREFIX/Cellar"
       export NIX_ZEROBREW_BIN="${selectedPackage}/bin/${binary}"
-      export PATH="${prefix.linkDir}/bin:$PATH"
-    '' + lib.optionalString (!cfg.mutableTaps) ''
+      export PATH="${prefix.linkDir}/bin:${prefix.linkDir}/sbin:$PATH"
+    '' + lib.optionalString (!cfg.mutableTaps || !cfg.global.autoUpdate) ''
       export HOMEBREW_NO_AUTO_UPDATE=1
+    '' + lib.optionalString cfg.global.brewfile ''
+      export NIX_ZEROBREW_BUNDLE_FILE="${prefix.prefix}/db/nix-zerobrew/Brewfile"
     '' + (lib.optionalString (cfg.extraEnv != { }) (lib.concatLines
       (lib.mapAttrsToList
         (name: value: "export ${name}=${lib.escapeShellArg value}")
@@ -157,26 +183,115 @@ let
         type = types.str;
       };
       args = lib.mkOption {
-        description = "Brewfile args emitted for this entry.";
-        type = types.listOf types.str;
+        description = ''
+          Install arguments. Formulae use a list of strings, matching nix-darwin.
+          Casks may use that list or a nix-darwin attrset such as `{ no_quarantine = true; }`.
+          `build-from-source` is passed to `zb`. Other arguments are reported and not applied.
+        '';
+        type = types.either (types.listOf types.str)
+          (types.attrsOf (types.either types.str types.bool));
         default = [ ];
+      };
+      link = lib.mkOption {
+        description = "Whether to link the formula. `false` passes `--no-link`.";
+        type = types.nullOr (types.either types.bool (types.enum [ "overwrite" ]));
+        default = null;
+      };
+      conflicts_with = lib.mkOption {
+        description = "Formulae to uninstall before this one is installed.";
+        type = types.nullOr (types.listOf types.str);
+        default = null;
+      };
+      restart_service = lib.mkOption {
+        description = "Accepted for Homebrew compatibility. zb has no services command.";
+        type = types.nullOr
+          (types.either types.bool (types.enum [ "changed" "always" ]));
+        default = null;
+      };
+      start_service = lib.mkOption {
+        description = "Accepted for Homebrew compatibility. zb has no services command.";
+        type = types.nullOr types.bool;
+        default = null;
+      };
+      postinstall = lib.mkOption {
+        description = ''
+          Shell command run after this package is newly installed or its `zb list` line changes.
+        '';
+        type = types.nullOr types.str;
+        default = null;
+      };
+      greedy = lib.mkOption {
+        description = "Upgrade this cask even when onActivation.upgrade is false.";
+        type = types.nullOr types.bool;
+        default = null;
       };
     };
   });
   packageEntryName = entry:
     if builtins.isString entry then entry else entry.name;
+  entryArgsList = entry:
+    if builtins.isString entry then [ ]
+    else if builtins.isList (entry.args or [ ]) then entry.args
+    else [ ];
+  entryArgsAttrs = entry:
+    if builtins.isString entry then { }
+    else if builtins.isAttrs (entry.args or [ ]) then entry.args
+    else { };
+  sourceArgs = [ "build-from-source" "--build-from-source" "-s" ];
+  entryWantsSource = entry: lib.any (arg: lib.elem arg sourceArgs) (entryArgsList entry);
+  entryNoLink = entry: !(builtins.isString entry) && (entry.link or null) == false;
+  entryDirect = entry: entryWantsSource entry || entryNoLink entry;
+      entryGreedy = kind: entry:
+        if kind != "cask" then false
+        else
+          let requested = if builtins.isString entry then null else entry.greedy or null;
+          in if requested == null then cfg.greedyCasks == true else requested;
+  quotedExtraName = kind: line:
+    let matched = builtins.match "${kind}[[:space:]]+\"([^\"]+)\".*" (lib.trim line);
+    in if matched == null then null else builtins.head matched;
+  parsedExtraConfig =
+    let
+      lines = lib.filter (line:
+        let trimmed = lib.trim line;
+        in trimmed != "" && !(lib.hasPrefix "#" trimmed))
+        (lib.splitString "\n" cfg.extraConfig);
+      classify = line:
+        let
+          brew = quotedExtraName "brew" line;
+          cask = quotedExtraName "cask" line;
+          vscode = quotedExtraName "vscode" line;
+          goPkg = quotedExtraName "go" line;
+          cargoPkg = quotedExtraName "cargo" line;
+          masName = quotedExtraName "mas" line;
+          masId = builtins.match ".*id:[[:space:]]*([0-9]+).*" line;
+        in if brew != null then { kind = "brew"; name = brew; }
+        else if cask != null then { kind = "cask"; name = cask; }
+        else if vscode != null then { kind = "vscode"; name = vscode; }
+        else if goPkg != null then { kind = "go"; name = goPkg; }
+        else if cargoPkg != null then { kind = "cargo"; name = cargoPkg; }
+        else if masName != null && masId != null then {
+          kind = "mas";
+          name = masName;
+          id = builtins.head masId;
+        }
+        else if lib.hasPrefix "tap " (lib.trim line) then { kind = "tap"; inherit line; }
+        else { kind = "other"; inherit line; };
+    in map classify lines;
+  extraBrews = map (item: item.name) (lib.filter (item: item.kind == "brew") parsedExtraConfig);
+  extraCasks = map (item: item.name) (lib.filter (item: item.kind == "cask") parsedExtraConfig);
+  extraVscode = map (item: item.name) (lib.filter (item: item.kind == "vscode") parsedExtraConfig);
+  extraGo = map (item: item.name) (lib.filter (item: item.kind == "go") parsedExtraConfig);
+  extraCargo = map (item: item.name) (lib.filter (item: item.kind == "cargo") parsedExtraConfig);
+  extraMasApps = lib.listToAttrs (map (item: {
+    name = item.name;
+    value = lib.toInt item.id;
+  }) (lib.filter (item: item.kind == "mas") parsedExtraConfig));
+  unsupportedExtraLines = map (item: item.line) (lib.filter
+    (item: item.kind == "tap" || item.kind == "other") parsedExtraConfig);
   escapeBrewfileString = value:
     builtins.replaceStrings [ "\\" ''"'' ] [ "\\\\" ''\"'' ] value;
-  brewfileArgs = args:
-    lib.optionalString (args != [ ]) (", args: ["
-      + lib.concatMapStringsSep ", " (arg: ''"${escapeBrewfileString arg}"'')
-      args + "]");
   brewfileLine = kind: entry:
-    let value = packageEntryName entry;
-    in ''
-      ${kind} "${escapeBrewfileString value}"${
-        brewfileArgs (entry.args or [ ])
-      }'';
+    ''${kind} "${escapeBrewfileString (packageEntryName entry)}"'';
   stateLine = kind: entry: "${kind}	${packageEntryName entry}";
   uniquePackageEntries = entries:
     lib.foldl' (acc: entry:
@@ -193,40 +308,59 @@ let
   normalizedPackagesForPrefix = name:
     let
       prefix = cfg.prefixes.${name};
-      topMasAppIds = map toString (lib.attrValues cfg.masApps);
-      prefixMasAppIds = map toString (lib.attrValues prefix.masApps);
+      topMas = cfg.masApps // extraMasApps;
+      prefixMas = prefix.masApps;
+      mergedMas = topMas // prefixMas;
+      hostMasIds = map toString (lib.attrValues mergedMas);
+      prefixMasIds = map toString (lib.attrValues prefixMas);
     in if name == hostDefaultPrefixKey then {
-      brews = (uniquePackageEntries (cfg.brews ++ prefix.brews)).values;
-      casks = (uniquePackageEntries (cfg.casks ++ prefix.casks)).values;
-      masAppIds = topMasAppIds
-        ++ lib.filter (id: !(builtins.elem id topMasAppIds)) prefixMasAppIds;
+      brews = (uniquePackageEntries (cfg.brews ++ extraBrews ++ prefix.brews)).values;
+      casks = (uniquePackageEntries (cfg.casks ++ extraCasks ++ prefix.casks)).values;
+      masAppIds = hostMasIds;
+      vscode = lib.unique (cfg.vscode ++ extraVscode ++ prefix.vscode);
+      goPackages = lib.unique (cfg.goPackages ++ extraGo ++ prefix.goPackages);
+      cargoPackages = lib.unique (cfg.cargoPackages ++ extraCargo ++ prefix.cargoPackages);
     } else {
       brews = (uniquePackageEntries prefix.brews).values;
       casks = (uniquePackageEntries prefix.casks).values;
-      masAppIds = lib.unique prefixMasAppIds;
+      masAppIds = lib.unique prefixMasIds;
+      vscode = lib.unique prefix.vscode;
+      goPackages = lib.unique prefix.goPackages;
+      cargoPackages = lib.unique prefix.cargoPackages;
     };
   safePrefixName = name:
     builtins.replaceStrings [ "/" " " "	" "\n" ] [ "_" "_" "_" "_" ] name;
   brewfileForPrefix = name:
     let packages = normalizedPackagesForPrefix name;
     in pkgs.writeText "nix-zerobrew-Brewfile-${safePrefixName name}"
-    (lib.concatLines ((map (brewfileLine "brew") packages.brews)
-      ++ (map (brewfileLine "cask") packages.casks)));
+    (lib.concatLines
+      ((map (brewfileLine "brew") (lib.filter (entry: !entryDirect entry) packages.brews))
+        ++ (map (brewfileLine "cask") (lib.filter (entry: !entryDirect entry) packages.casks))));
   stateForPrefix = name:
     let packages = normalizedPackagesForPrefix name;
     in pkgs.writeText "nix-zerobrew-state-${safePrefixName name}"
     (lib.concatLines ((map (stateLine "brew") packages.brews)
       ++ (map (stateLine "cask") packages.casks)
-      ++ (map (id: "mas	${id}") packages.masAppIds)));
+      ++ (map (id: "mas	${id}") packages.masAppIds)
+      ++ (map (id: "vscode	${id}") packages.vscode)
+      ++ (map (id: "go	${id}") packages.goPackages)
+      ++ (map (id: "cargo	${id}") packages.cargoPackages)));
   hasDeclarativePackagesForPrefix = name:
     let packages = normalizedPackagesForPrefix name;
-    in packages.brews != [ ] || packages.casks != [ ] || packages.masAppIds
-    != [ ];
+    in packages.brews != [ ] || packages.casks != [ ] || packages.masAppIds != [ ]
+      || packages.vscode != [ ] || packages.goPackages != [ ]
+      || packages.cargoPackages != [ ];
   hasTopLevelDeclarativePackages = cfg.brews != [ ] || cfg.casks != [ ]
-    || cfg.masApps != { };
+    || cfg.masApps != { } || cfg.vscode != [ ] || cfg.goPackages != [ ]
+    || cfg.cargoPackages != [ ] || extraBrews != [ ] || extraCasks != [ ]
+    || extraVscode != [ ] || extraGo != [ ] || extraCargo != [ ]
+    || extraMasApps != { };
   hasPerPrefixDeclarativePackages = builtins.any (name:
     cfg.prefixes.${name}.brews != [ ] || cfg.prefixes.${name}.casks != [ ]
-    || cfg.prefixes.${name}.masApps != { }) (builtins.attrNames cfg.prefixes);
+    || cfg.prefixes.${name}.masApps != { } || cfg.prefixes.${name}.vscode != [ ]
+    || cfg.prefixes.${name}.goPackages != [ ]
+    || cfg.prefixes.${name}.cargoPackages != [ ])
+    (builtins.attrNames cfg.prefixes);
   hasAnyDeclarativePackages = hasTopLevelDeclarativePackages
     || hasPerPrefixDeclarativePackages;
   effectiveDoctorRepair = cfg.enableDoctorRepair || cfg.onActivation.doctor
@@ -278,22 +412,90 @@ let
         /bin/ln -shf "${env}" "$ZEROBREW_LINK_DIR/Library/Taps"
       '';
 
-  setupDeclarativePackagesForPrefix = cleanup: name:
+  setupDeclarativePackagesForPrefix = name:
     let
       packages = normalizedPackagesForPrefix name;
       brewfile = brewfileForPrefix name;
       state = stateForPrefix name;
-      hasMasApps = packages.masAppIds != [ ];
+      cleanup = cfg.onActivation.cleanup;
+      extraFlags = lib.escapeShellArgs cfg.onActivation.extraFlags;
+      zbFlags = if extraFlags == "" then "" else " ${extraFlags}";
+      bundleBrews = lib.filter (entry: !entryDirect entry) packages.brews;
+      bundleCasks = lib.filter (entry: !entryDirect entry) packages.casks;
+      directEntries = map (entry: { kind = "brew"; inherit entry; }) (lib.filter entryDirect packages.brews)
+        ++ map (entry: { kind = "cask"; inherit entry; }) (lib.filter entryDirect packages.casks);
+      bundleEntries = map (entry: { kind = "brew"; inherit entry; }) bundleBrews
+        ++ map (entry: { kind = "cask"; inherit entry; }) bundleCasks;
+      allEntries = map (entry: { kind = "brew"; inherit entry; }) packages.brews
+        ++ map (entry: { kind = "cask"; inherit entry; }) packages.casks;
+      installToken = kind: entry:
+        if kind == "cask" then "cask:${packageEntryName entry}" else packageEntryName entry;
+      entryWarnings = kind: entry:
+        let
+          token = packageEntryName entry;
+          unknownArgs = lib.filter (arg: !(lib.elem arg sourceArgs)) (entryArgsList entry);
+          attrArgs = lib.attrNames (entryArgsAttrs entry);
+          linkValue = if builtins.isString entry then null else entry.link or null;
+          restartValue = if builtins.isString entry then null else entry.restart_service or null;
+          startValue = if builtins.isString entry then null else entry.start_service or null;
+          messages = lib.optionals (unknownArgs != [ ]) [
+            "ignoring unsupported args for ${kind} ${token}: ${lib.concatStringsSep ", " unknownArgs}. zb accepts --build-from-source and --no-link"
+          ] ++ lib.optionals (linkValue == "overwrite") [
+            "link = \"overwrite\" is not supported for ${token}; zb links without replacing other formulae"
+          ] ++ lib.optionals (restartValue != null) [
+            "restart_service is not supported for ${token}; zb has no services command"
+          ] ++ lib.optionals (startValue == true) [
+            "start_service is not supported for ${token}; zb has no services command"
+          ] ++ lib.optionals (attrArgs != [ ]) [
+            "cask args ${lib.concatStringsSep ", " attrArgs} are not applied for ${token}"
+          ];
+        in lib.concatMapStrings (message: "warn ${lib.escapeShellArg message}\n") messages;
+      conflictsFor = entry:
+        if builtins.isString entry || (entry.conflicts_with or null) == null then [ ]
+        else entry.conflicts_with;
+      postinstallFor = entry:
+        if builtins.isString entry then null else entry.postinstall or null;
+      installFlags = entry:
+        lib.optional (entryNoLink entry) "--no-link"
+        ++ lib.optional (entryWantsSource entry) "--build-from-source";
+      helperNames = lib.optionals (packages.masAppIds != [ ]) [ "mas" ]
+        ++ lib.optionals (packages.goPackages != [ ]) [ "go" ]
+        ++ lib.optionals (packages.cargoPackages != [ ]) [ "rust" ]
+        ++ lib.optionals (packages.vscode != [ ]) [ "visual-studio-code" ];
+      goInstallSpec = pkg:
+        if lib.hasInfix "@" pkg then pkg else "${pkg}@latest";
     in ''
-      ${lib.optionalString
-      (hasTopLevelDeclarativePackages && name == hostDefaultPrefixKey) ''
+      ${lib.optionalString (hasTopLevelDeclarativePackages && name == hostDefaultPrefixKey) ''
         # Top-level nix-zerobrew package declarations target the host default prefix only.
       ''}
+      # declarative-brews: ${lib.concatMapStringsSep " " packageEntryName packages.brews}
+      # declarative-casks: ${lib.concatMapStringsSep " " packageEntryName packages.casks}
+      # declarative-mas: ${lib.concatStringsSep " " packages.masAppIds}
       NIX_ZEROBREW_DECLARATIVE_DIR="$ZEROBREW_ROOT/db/nix-zerobrew"
       NIX_ZEROBREW_BREWFILE="$NIX_ZEROBREW_DECLARATIVE_DIR/Brewfile"
       NIX_ZEROBREW_STATE="$NIX_ZEROBREW_DECLARATIVE_DIR/state"
       NIX_ZEROBREW_NEW_STATE="$NIX_ZEROBREW_DECLARATIVE_DIR/state.new"
       NIX_ZEROBREW_OLD_STATE="$NIX_ZEROBREW_DECLARATIVE_DIR/state.old"
+      NIX_ZB_HELPERS=${lib.escapeShellArg (lib.concatStringsSep " " helperNames)}
+
+      nix_zb_list_line() {
+        local name="$1"
+        awk -v n="$name" -v c="cask:$name" '$1 == n || $1 == c { print; exit }'
+      }
+
+      nix_zb_changed() {
+        local name="$1"
+        local before after
+        before="$(printf '%s\n' "$NIX_ZB_LIST_BEFORE" | nix_zb_list_line "$name")"
+        after="$("$BIN_ZB" list 2>/dev/null | nix_zb_list_line "$name" || true)"
+        if [[ -z "$before" && -n "$after" ]]; then
+          return 0
+        fi
+        if [[ -n "$before" && "$before" != "$after" ]]; then
+          return 0
+        fi
+        return 1
+      }
 
       "''${MKDIR[@]}" "$NIX_ZEROBREW_DECLARATIVE_DIR"
       if [[ -f "$NIX_ZEROBREW_STATE" ]]; then
@@ -304,14 +506,108 @@ let
       /bin/cp "${brewfile}" "$NIX_ZEROBREW_BREWFILE"
       /bin/cp "${state}" "$NIX_ZEROBREW_NEW_STATE"
 
-      ${lib.optionalString (packages.brews != [ ] || packages.casks != [ ]) ''
-        ohai "Installing declarative Zerobrew brews and casks for $ZEROBREW_LINK_DIR..."
-        "$BIN_ZB" bundle install --file "$NIX_ZEROBREW_BREWFILE"
+      ${lib.optionalString (cfg.caskArgs != { }) ''
+        warn "nix-zerobrew.caskArgs is accepted for Homebrew compatibility, but zb cannot apply cask install options such as appdir or no_quarantine"
+      ''}
+      ${lib.optionalString (name == hostDefaultPrefixKey) (lib.concatMapStrings (line: ''
+        warn ${lib.escapeShellArg "ignoring extraConfig line that zb cannot apply: ${line}"}
+      '') unsupportedExtraLines)}
+      ${lib.concatMapStrings ({ kind, entry }: entryWarnings kind entry) allEntries}
+
+      NIX_ZB_LIST_BEFORE="$("$BIN_ZB" list 2>/dev/null || true)"
+
+      ${lib.optionalString (cleanup == "check") ''
+        ohai "Checking for Zerobrew packages that are not declared..."
+        nix_zb_undeclared=0
+        while read -r nix_zb_name nix_zb_version; do
+          [[ -n "$nix_zb_name" && "$nix_zb_name" != "No" ]] || continue
+          nix_zb_token="''${nix_zb_name#cask:}"
+          if grep -Eq "^(brew|cask)	$(printf '%s' "$nix_zb_token" | sed 's/[][\.*^$]/\\&/g')$" "$NIX_ZEROBREW_NEW_STATE"; then
+            continue
+          fi
+          case " $NIX_ZB_HELPERS " in
+            *" $nix_zb_token "*) continue ;;
+          esac
+          error "Zerobrew package $nix_zb_token is installed but not declared, aborting activation"
+          nix_zb_undeclared=1
+        done <<< "$NIX_ZB_LIST_BEFORE"
+        if [[ "$nix_zb_undeclared" -ne 0 ]]; then
+          ohai "Add the packages to nix-zerobrew.brews or casks, uninstall them with zb uninstall, or set nix-zerobrew.onActivation.cleanup to \"uninstall\" or \"none\"."
+          exit 1
+        fi
       ''}
 
-      ${lib.optionalString hasMasApps ''
+      ${lib.concatMapStrings ({ kind, entry }: lib.concatMapStrings (conflict: ''
+        if printf '%s\n' "$NIX_ZB_LIST_BEFORE" | nix_zb_list_line ${lib.escapeShellArg conflict} | grep -q .; then
+          ohai "Unlinking conflicting formula ${conflict} before installing ${packageEntryName entry}"
+          "$BIN_ZB" uninstall ${lib.escapeShellArg conflict}
+        fi
+      '') (conflictsFor entry)) allEntries}
+
+      ${lib.concatMapStrings ({ kind, entry }: ''
+        ohai "Installing ${installToken kind entry} with zb install"
+        "$BIN_ZB" install${zbFlags} ${lib.concatMapStringsSep " " lib.escapeShellArg (installFlags entry)} ${lib.escapeShellArg (installToken kind entry)}
+        ${lib.optionalString (postinstallFor entry != null) ''
+          if nix_zb_changed ${lib.escapeShellArg (packageEntryName entry)}; then
+            ohai "Running postinstall for ${packageEntryName entry}"
+            bash -c ${lib.escapeShellArg (postinstallFor entry)}
+          fi
+        ''}
+      '') directEntries}
+
+      ${lib.optionalString (bundleBrews != [ ] || bundleCasks != [ ]) ''
+        ohai "Installing declarative Zerobrew brews and casks for $ZEROBREW_LINK_DIR..."
+        "$BIN_ZB" bundle install --file "$NIX_ZEROBREW_BREWFILE"${zbFlags}
+      ''}
+
+      ${lib.concatMapStrings ({ kind, entry }: lib.optionalString (postinstallFor entry != null) ''
+        if nix_zb_changed ${lib.escapeShellArg (packageEntryName entry)}; then
+          ohai "Running postinstall for ${packageEntryName entry}"
+          bash -c ${lib.escapeShellArg (postinstallFor entry)}
+        fi
+      '') bundleEntries}
+
+      ${lib.concatMapStrings ({ kind, entry }: lib.optionalString (entryGreedy kind entry) ''
+        ohai "Upgrading greedy ${kind} ${packageEntryName entry}"
+        "$BIN_ZB" upgrade${zbFlags} ${lib.escapeShellArg (installToken kind entry)}
+      '') allEntries}
+
+      ${lib.optionalString (packages.vscode != [ ]) ''
+        if [[ ! -x "$ZEROBREW_LINK_DIR/bin/code" ]] && ! command -v code >/dev/null 2>&1; then
+          ohai "Installing visual-studio-code for declarative VS Code extensions"
+          "$BIN_ZB" install${zbFlags} cask:visual-studio-code
+        fi
+        NIX_ZB_CODE="$ZEROBREW_LINK_DIR/bin/code"
+        if [[ ! -x "$NIX_ZB_CODE" ]]; then
+          NIX_ZB_CODE="$(command -v code)"
+        fi
+        ${lib.concatMapStrings (extension: ''
+          ohai "Installing VS Code extension ${extension}"
+          "$NIX_ZB_CODE" --install-extension ${lib.escapeShellArg extension}
+        '') packages.vscode}
+      ''}
+
+      ${lib.optionalString (packages.goPackages != [ ]) ''
+        ohai "Installing go for declarative Go packages"
+        "$BIN_ZB" install${zbFlags} go
+        ${lib.concatMapStrings (pkg: ''
+          ohai "Installing Go package ${pkg}"
+          "$ZEROBREW_LINK_DIR/bin/go" install ${lib.escapeShellArg (goInstallSpec pkg)}
+        '') packages.goPackages}
+      ''}
+
+      ${lib.optionalString (packages.cargoPackages != [ ]) ''
+        ohai "Installing rust for declarative Cargo packages"
+        "$BIN_ZB" install${zbFlags} rust
+        ${lib.concatMapStrings (pkg: ''
+          ohai "Installing Cargo package ${pkg}"
+          "$ZEROBREW_LINK_DIR/bin/cargo" install ${lib.escapeShellArg pkg}
+        '') packages.cargoPackages}
+      ''}
+
+      ${lib.optionalString (packages.masAppIds != [ ]) ''
         ohai "Installing declarative Mac App Store apps for $ZEROBREW_LINK_DIR..."
-        "$BIN_ZB" install mas
+        "$BIN_ZB" install${zbFlags} mas
         NIX_ZEROBREW_MAS_LIST="$("$ZEROBREW_LINK_DIR/bin/mas" list || true)"
         while IFS=$'\t' read -r kind value; do
           [[ "$kind" == "mas" && -n "$value" ]] || continue
@@ -320,9 +616,16 @@ let
           fi
           "$ZEROBREW_LINK_DIR/bin/mas" install "$value"
         done < "$NIX_ZEROBREW_NEW_STATE"
+        ${lib.optionalString cfg.onActivation.upgrade ''
+          while IFS=$'\t' read -r kind value; do
+            [[ "$kind" == "mas" && -n "$value" ]] || continue
+            ohai "Upgrading Mac App Store app $value"
+            "$ZEROBREW_LINK_DIR/bin/mas" upgrade "$value"
+          done < "$NIX_ZEROBREW_NEW_STATE"
+        ''}
       ''}
 
-      ${lib.optionalString cleanup ''
+      ${lib.optionalString (cleanup == "uninstall") ''
         while IFS=$'\t' read -r kind value; do
           [[ -n "$kind" && -n "$value" ]] || continue
           if grep -Fqx "$kind"$'\t'"$value" "$NIX_ZEROBREW_NEW_STATE"; then
@@ -336,6 +639,29 @@ let
             cask)
               ohai "Removing declarative Zerobrew cask no longer configured: $value"
               "$BIN_ZB" uninstall "cask:$value"
+              ;;
+            vscode)
+              ohai "Removing declarative VS Code extension no longer configured: $value"
+              NIX_ZB_CODE="$ZEROBREW_LINK_DIR/bin/code"
+              if [[ ! -x "$NIX_ZB_CODE" ]]; then
+                NIX_ZB_CODE="$(command -v code || true)"
+              fi
+              if [[ -n "$NIX_ZB_CODE" ]]; then
+                "$NIX_ZB_CODE" --uninstall-extension "$value" || warn "Failed to uninstall VS Code extension $value"
+              else
+                warn "VS Code extension $value was removed from nix-zerobrew declarations, but the code command is unavailable"
+              fi
+              ;;
+            cargo)
+              ohai "Removing declarative Cargo package no longer configured: $value"
+              if [[ -x "$ZEROBREW_LINK_DIR/bin/cargo" ]]; then
+                "$ZEROBREW_LINK_DIR/bin/cargo" uninstall "$value" || warn "Failed to uninstall Cargo package $value"
+              else
+                warn "Cargo package $value was removed from nix-zerobrew declarations, but cargo is not installed"
+              fi
+              ;;
+            go)
+              warn "Go package $value was removed from nix-zerobrew declarations, but go install has no uninstall command; dropping it from nix-zerobrew state only"
               ;;
             mas)
               warn "Mac App Store app $value was removed from nix-zerobrew declarations, but MAS uninstall is unsupported; dropping it from nix-zerobrew state only"
@@ -360,6 +686,12 @@ let
         lib.concatMapStringsSep " " lib.escapeShellArg prefix.extraLinkDirs
       })
       NIX_ZEROBREW_MUTABLE_TAPS="${lib.optionalString cfg.mutableTaps "1"}"
+      ${lib.optionalString (!cfg.mutableTaps || !cfg.global.autoUpdate) ''
+        export HOMEBREW_NO_AUTO_UPDATE=1
+      ''}
+      ${lib.optionalString cfg.global.brewfile ''
+        export NIX_ZEROBREW_BUNDLE_FILE="$ZEROBREW_ROOT/db/nix-zerobrew/Brewfile"
+      ''}
 
       >&2 echo "setting up Zerobrew ($ZEROBREW_ROOT)..."
 
@@ -402,8 +734,7 @@ let
         "$BIN_ZB" update
       ''}
 
-      ${setupDeclarativePackagesForPrefix
-      (cfg.onActivation.cleanup == "uninstall") name}
+      ${setupDeclarativePackagesForPrefix name}
 
       ${lib.optionalString cfg.onActivation.upgrade ''
         ohai "Running Zerobrew upgrade for $ZEROBREW_LINK_DIR..."
@@ -742,8 +1073,17 @@ in {
             cleanup = lib.mkOption {
               description =
                 "How to remove previously tracked packages that are no longer declared.";
-              type = types.enum [ "none" "uninstall" "zap" ];
+              type = types.enum [ "none" "uninstall" "zap" "check" ];
               default = "uninstall";
+            };
+
+            extraFlags = lib.mkOption {
+              description = ''
+                Extra flags passed to `zb install`, `zb bundle install`, and `zb upgrade` during activation.
+              '';
+              type = types.listOf types.str;
+              default = [ ];
+              example = [ "--verbose" ];
             };
 
             gc = lib.mkOption {
@@ -805,11 +1145,98 @@ in {
         '';
       };
 
+      vscode = lib.mkOption {
+        description = ''
+          Visual Studio Code extension ids to install on the host default prefix.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "golang.go" ];
+      };
+
+      goPackages = lib.mkOption {
+        description = ''
+          Go packages to install with `go install` on the host default prefix.
+          The `go` formula is installed first.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "github.com/charmbracelet/crush" ];
+      };
+
+      cargoPackages = lib.mkOption {
+        description = ''
+          Cargo packages to install with `cargo install` on the host default prefix.
+          The `rust` formula is installed first.
+        '';
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "ripgrep" ];
+      };
+
+      caskArgs = lib.mkOption {
+        description = ''
+          Accepted for Homebrew compatibility. zb cannot apply these install options.
+          Activation warns when the set is non-empty.
+        '';
+        type = types.attrsOf (types.either types.str types.bool);
+        default = { };
+        example = lib.literalExpression ''
+          {
+            appdir = "~/Applications";
+            no_quarantine = true;
+          }
+        '';
+      };
+
+      greedyCasks = lib.mkOption {
+        description = ''
+          Default `greedy` value for declared casks. When true, each cask is upgraded during activation.
+        '';
+        type = types.nullOr types.bool;
+        default = null;
+      };
+
+      extraConfig = lib.mkOption {
+        description = ''
+          Extra Brewfile lines. `brew`, `cask`, `mas`, `vscode`, `go`, and `cargo` lines are applied on the host default prefix. Other lines are reported and skipped.
+        '';
+        type = types.lines;
+        default = "";
+      };
+
+      global = lib.mkOption {
+        description = ''
+          Behavior of manual `zb` commands, following nix-darwin's `homebrew.global`.
+        '';
+        type = types.submodule {
+          options = {
+            brewfile = lib.mkOption {
+              description = ''
+                Make `zb bundle` use the Brewfile generated during activation when no `--file` is given.
+              '';
+              type = types.bool;
+              default = false;
+            };
+            autoUpdate = lib.mkOption {
+              description = ''
+                When false, prefix launchers export `HOMEBREW_NO_AUTO_UPDATE=1`.
+              '';
+              type = types.bool;
+              default = true;
+            };
+          };
+        };
+        default = { };
+      };
+
       user = lib.mkOption {
         description = ''
           The user owning the Zerobrew directories.
         '';
         type = types.str;
+        default = config.system.primaryUser;
+        defaultText = lib.literalExpression "config.system.primaryUser";
       };
 
       group = lib.mkOption {
@@ -924,9 +1351,14 @@ in {
         assertion = builtins.all validStateValue (map packageEntryName
           (cfg.brews ++ cfg.casks ++ lib.concatMap
             (name: cfg.prefixes.${name}.brews ++ cfg.prefixes.${name}.casks)
-            (builtins.attrNames cfg.prefixes)));
+            (builtins.attrNames cfg.prefixes))
+          ++ cfg.vscode ++ cfg.goPackages ++ cfg.cargoPackages
+          ++ lib.concatMap (name:
+            cfg.prefixes.${name}.vscode ++ cfg.prefixes.${name}.goPackages
+            ++ cfg.prefixes.${name}.cargoPackages)
+            (builtins.attrNames cfg.prefixes));
         message =
-          "nix-zerobrew brews and casks entries must not contain tabs or newlines";
+          "nix-zerobrew package entries must not contain tabs or newlines";
       }
       {
         assertion = cfg.onActivation.cleanup != "zap";
