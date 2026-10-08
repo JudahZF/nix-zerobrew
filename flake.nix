@@ -12,7 +12,7 @@
       type = "github";
       owner = "zerobrewhq";
       repo = "zerobrew";
-      ref = "v0.3.5";
+      ref = "v0.4.0";
       flake = false;
     };
   };
